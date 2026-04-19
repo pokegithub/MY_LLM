@@ -1,0 +1,6 @@
+{
+  "history": [],
+  "best_val_loss": Infinity,
+  "best_step": 0,
+  "stopped_early": false
+}

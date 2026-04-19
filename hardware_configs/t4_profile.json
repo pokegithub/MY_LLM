@@ -1,0 +1,10 @@
+{
+  "name": "nvidia_t4",
+  "preferred_dtype": "float16",
+  "attention_backend": "auto",
+  "use_flashattention": true,
+  "max_batch_size": 8,
+  "max_seq_len": 2048,
+  "kv_cache_policy": "paged",
+  "quantization": "int8"
+}

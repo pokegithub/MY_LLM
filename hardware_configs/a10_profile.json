@@ -1,0 +1,10 @@
+{
+  "name": "nvidia_a10",
+  "preferred_dtype": "bfloat16",
+  "attention_backend": "auto",
+  "use_flashattention": true,
+  "max_batch_size": 16,
+  "max_seq_len": 4096,
+  "kv_cache_policy": "paged",
+  "quantization": "int8"
+}
