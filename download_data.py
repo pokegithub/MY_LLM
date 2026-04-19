@@ -12,10 +12,10 @@ import sys
 import math
 import time
 import json
+import hashlib
 import numpy as np
 import random
 sys.path.insert(0, ".")
-from datasets import load_dataset
 from tokenizer import BPETokenizer
 from config import train_cfg
 from security.validator import ValidationError, get_allowed_data_roots, safe_load_json
@@ -32,6 +32,9 @@ VAL_FRACTION = 0.02  # 2% held out for validation
 MAX_STREAM_RETRIES = 5
 MAX_LOAD_RETRIES = 3
 MANIFEST_PATH = os.path.join(".", "data_cache", "download_manifest.json")
+TOKEN_ARTIFACT_MANIFEST_PATH = os.path.join(
+    ".", "data_cache", "token_artifacts_manifest.json"
+)
 NETWORK_SAFE_FLAKY_SOURCES = {
     "HuggingFaceTB/smollm-corpus",
     "codeparrot/github-code",
@@ -203,6 +206,324 @@ def existing_tokens(fp, db):
     return os.path.getsize(fp) // db
 
 
+def dtype_name(dtype) -> str:
+    return np.dtype(dtype).name
+
+
+def config_hash(payload: dict) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def token_artifact_record(
+    *,
+    path: str,
+    source: str,
+    subset,
+    dataset_split: str,
+    artifact_split: str,
+    dtype,
+    config_digest: str | None = None,
+) -> dict:
+    dt = np.dtype(dtype)
+    exists = os.path.exists(path)
+    size_bytes = os.path.getsize(path) if exists else 0
+    if exists and size_bytes % dt.itemsize != 0:
+        raise ValueError(
+            f"Token artifact byte size is not divisible by dtype width: {path}"
+        )
+    record = {
+        "path": path,
+        "exists": exists,
+        "source": source,
+        "subset": subset,
+        "dataset_split": dataset_split,
+        "artifact_split": artifact_split,
+        "dtype": dt.name,
+        "itemsize": dt.itemsize,
+        "size_bytes": size_bytes,
+        "token_count": size_bytes // dt.itemsize,
+    }
+    if config_digest is not None:
+        record["config_hash"] = config_digest
+    return record
+
+
+def write_token_artifact_manifest(
+    records: list[dict],
+    manifest_path: str,
+    metadata: dict | None = None,
+) -> str:
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+    payload = {
+        "schema": "token_artifacts_manifest_v1",
+        "created_at": int(time.time()),
+        "artifacts": records,
+    }
+    if metadata is not None:
+        payload["metadata"] = metadata
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    return manifest_path
+
+
+def build_token_artifact_records(sources, dtype, config_digest: str | None = None):
+    records = []
+    for path, sub, _, _ in sources:
+        dataset_split = SPLIT_OVERRIDES.get(path, "train")
+        records.append(
+            token_artifact_record(
+                path=bin_path(path, sub),
+                source=path,
+                subset=sub,
+                dataset_split=dataset_split,
+                artifact_split="train",
+                dtype=dtype,
+                config_digest=config_digest,
+            )
+        )
+        records.append(
+            token_artifact_record(
+                path=val_bin_path(path, sub),
+                source=path,
+                subset=sub,
+                dataset_split=dataset_split,
+                artifact_split="validation",
+                dtype=dtype,
+                config_digest=config_digest,
+            )
+        )
+    return records
+
+
+def _known_artifact_labels() -> dict[str, tuple[str, object, str]]:
+    labels = {}
+    for path, sub, _, _ in ALL_SOURCES:
+        labels[safe_label(path, sub)] = (
+            path,
+            sub,
+            SPLIT_OVERRIDES.get(path, "train"),
+        )
+    return labels
+
+
+def _infer_token_dtype(tokenizer_path: str):
+    tok = BPETokenizer()
+    tok.load(tokenizer_path)
+    return np.uint16 if tok.vocab_size_ <= 65535 else np.uint32, {
+        "method": "tokenizer_vocab_size",
+        "tokenizer_path": tokenizer_path,
+        "vocab_size": tok.vocab_size_,
+    }
+
+
+def reconstruct_token_artifact_manifest(
+    *,
+    token_cache_dir: str = CACHE_DIR,
+    val_cache_dir: str = VAL_CACHE_DIR,
+    manifest_path: str = TOKEN_ARTIFACT_MANIFEST_PATH,
+    tokenizer_path: str = "./tokenizer_data",
+    dtype=None,
+) -> dict:
+    """Rebuild a truthful manifest from local token binaries.
+
+    This records only file-derived facts and source IDs inferable from the
+    artifact filename. It does not reconstruct original license decisions,
+    source filtering decisions, shuffle order, or deduplication provenance.
+    """
+    if dtype is None:
+        dtype, dtype_meta = _infer_token_dtype(tokenizer_path)
+    else:
+        dtype = np.dtype(dtype)
+        dtype_meta = {
+            "method": "caller_supplied",
+            "dtype": dtype.name,
+        }
+
+    known = _known_artifact_labels()
+    records: list[dict] = []
+    unknown_source_count = 0
+
+    for directory, artifact_split in (
+        (token_cache_dir, "train"),
+        (val_cache_dir, "validation"),
+    ):
+        if not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".bin"):
+                continue
+            label = name[:-4]
+            source, subset, dataset_split = known.get(
+                label,
+                ("unknown", "unknown", "unknown"),
+            )
+            source_status = "matched_known_source"
+            if source == "unknown":
+                source_status = "unknown_filename"
+                unknown_source_count += 1
+            record = token_artifact_record(
+                path=os.path.join(directory, name),
+                source=source,
+                subset=subset,
+                dataset_split=dataset_split,
+                artifact_split=artifact_split,
+                dtype=dtype,
+            )
+            record["provenance_status"] = "reconstructed_from_local_cache"
+            record["source_identifier_status"] = source_status
+            record["provenance_limitations"] = [
+                "file size and token count are verified from local binary size",
+                "source/subset are inferred from filename only when recognized",
+                "original filtering, license, dedup, shuffle, and contamination decisions are not reconstructed",
+            ]
+            records.append(record)
+
+    metadata = {
+        "provenance_status": "reconstructed_from_local_cache",
+        "dtype_inference": dtype_meta,
+        "artifact_count": len(records),
+        "unknown_source_count": unknown_source_count,
+        "limitations": [
+            "manifest reconstructed after artifact creation",
+            "does not prove dataset quality, licensing, deduplication, or benchmark decontamination",
+        ],
+    }
+    written = write_token_artifact_manifest(records, manifest_path, metadata=metadata)
+    return {
+        "manifest_path": written,
+        "artifact_count": len(records),
+        "unknown_source_count": unknown_source_count,
+        "metadata": metadata,
+    }
+
+
+def _sample_file_sha256(path: str, block_size: int = 65536) -> dict:
+    size = os.path.getsize(path)
+    digest = hashlib.sha256()
+    mode = "full" if size <= block_size * 2 else "head_tail_sample"
+    with open(path, "rb") as handle:
+        if mode == "full":
+            digest.update(handle.read())
+        else:
+            digest.update(handle.read(block_size))
+            handle.seek(max(0, size - block_size))
+            digest.update(handle.read(block_size))
+    return {
+        "hash": digest.hexdigest(),
+        "mode": mode,
+        "block_size": block_size,
+        "is_full_file_hash": mode == "full",
+    }
+
+
+def validate_token_artifact_manifest(
+    *,
+    manifest_path: str = TOKEN_ARTIFACT_MANIFEST_PATH,
+    hash_block_size: int = 65536,
+) -> dict:
+    """Inspect token artifacts without claiming data quality or licensing proof."""
+    report = {
+        "ok": False,
+        "manifest_path": manifest_path,
+        "schema": "unknown",
+        "artifact_count": 0,
+        "existing_artifact_count": 0,
+        "failed_artifact_count": 0,
+        "missing_train_val_pairs": [],
+        "hash_scope": "full for small files, head/tail sample for larger files",
+        "quality_claim": "none",
+        "artifacts": [],
+        "errors": [],
+    }
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"manifest_load_failed: {exc}")
+        return report
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        report["errors"].append("manifest artifacts field is missing or not a list")
+        return report
+
+    report["schema"] = str(manifest.get("schema", "unknown"))
+    report["artifact_count"] = len(artifacts)
+    split_pairs: dict[tuple[str, str], set[str]] = {}
+
+    for item in artifacts:
+        result = {
+            "path": item.get("path") if isinstance(item, dict) else None,
+            "source": item.get("source", "unknown") if isinstance(item, dict) else "unknown",
+            "subset": item.get("subset", "unknown") if isinstance(item, dict) else "unknown",
+            "artifact_split": item.get("artifact_split", "unknown") if isinstance(item, dict) else "unknown",
+            "status": "pass",
+            "errors": [],
+        }
+        if not isinstance(item, dict):
+            result["status"] = "fail"
+            result["errors"].append("artifact record is not an object")
+            report["artifacts"].append(result)
+            continue
+
+        path = str(item.get("path", ""))
+        dtype_name_value = item.get("dtype", "uint16")
+        try:
+            dtype = np.dtype(dtype_name_value)
+        except (TypeError, ValueError) as exc:
+            result["status"] = "fail"
+            result["errors"].append(f"invalid dtype: {exc}")
+            report["artifacts"].append(result)
+            continue
+
+        if not os.path.isfile(path):
+            result["status"] = "fail"
+            result["errors"].append("artifact file is missing")
+            report["artifacts"].append(result)
+            continue
+
+        report["existing_artifact_count"] += 1
+        size_bytes = os.path.getsize(path)
+        token_count = size_bytes // dtype.itemsize
+        result.update({
+            "size_bytes": size_bytes,
+            "dtype": dtype.name,
+            "itemsize": dtype.itemsize,
+            "token_count": token_count,
+        })
+        if size_bytes % dtype.itemsize != 0:
+            result["status"] = "fail"
+            result["errors"].append("size is not divisible by dtype itemsize")
+        if int(item.get("size_bytes", size_bytes)) != size_bytes:
+            result["status"] = "fail"
+            result["errors"].append("manifest size_bytes does not match file")
+        if int(item.get("token_count", token_count)) != token_count:
+            result["status"] = "fail"
+            result["errors"].append("manifest token_count does not match file")
+
+        checksum = _sample_file_sha256(path, block_size=hash_block_size)
+        result["sha256"] = checksum
+
+        key = (str(item.get("source", "unknown")), str(item.get("subset", "unknown")))
+        split_pairs.setdefault(key, set()).add(str(item.get("artifact_split", "unknown")))
+        report["artifacts"].append(result)
+
+    for (source, subset), splits in sorted(split_pairs.items()):
+        if {"train", "validation"} - splits:
+            report["missing_train_val_pairs"].append({
+                "source": source,
+                "subset": subset,
+                "present_splits": sorted(splits),
+            })
+
+    report["failed_artifact_count"] = sum(
+        1 for item in report["artifacts"] if item.get("status") == "fail"
+    )
+    report["ok"] = report["failed_artifact_count"] == 0 and report["artifact_count"] > 0
+    return report
+
+
 def disk_gb(d):
     if not os.path.exists(d):
         return 0
@@ -218,8 +539,8 @@ def get_text(fn, ex):
         t = fn(ex)
         if isinstance(t, str) and len(t.strip()) > 30:
             return t.strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"     Source extractor failed; using fallback fields: {str(exc)[:100]}")
     for k in (
         "text", "content", "code", "output", "markdown",
         "chosen", "instruction", "question", "description",
@@ -231,6 +552,8 @@ def get_text(fn, ex):
 
 
 def load_ds(path, sub):
+    from datasets import load_dataset
+
     sp = SPLIT_OVERRIDES.get(path, "train")
     kw = dict(split=sp, streaming=True)
     if sub:
@@ -261,8 +584,8 @@ def _load_manifest() -> dict:
         )
         if isinstance(obj, dict) and isinstance(obj.get("runs"), list):
             return obj
-    except (ValidationError, OSError, ValueError):
-        pass
+    except (ValidationError, OSError, ValueError) as exc:
+        print(f"  Warning: failed to load download manifest: {str(exc)[:120]}")
     return {"runs": []}
 
 
@@ -450,6 +773,23 @@ def main():
     db = 2 if dtype == np.uint16 else 4
 
     sources = active_sources()
+    artifact_config_hash = config_hash(
+        {
+            "total_tokens": TOTAL_TOKENS,
+            "val_fraction": VAL_FRACTION,
+            "sources": [
+                {
+                    "source": path,
+                    "subset": sub,
+                    "weight": weight,
+                    "dataset_split": SPLIT_OVERRIDES.get(path, "train"),
+                }
+                for path, sub, weight, _ in sources
+            ],
+            "dtype": dtype_name(dtype),
+            "tokenizer_vocab_size": tok.vocab_size_,
+        }
+    )
 
     tw = sum(w for _, _, w, _ in sources)
     budgets = {
@@ -566,6 +906,15 @@ def main():
             "elapsed_sec": round(time.time() - src_t0, 2),
             "error": src_error,
         })
+        run_entry["token_artifacts"] = build_token_artifact_records(
+            sources,
+            dtype,
+            artifact_config_hash,
+        )
+        write_token_artifact_manifest(
+            run_entry["token_artifacts"],
+            TOKEN_ARTIFACT_MANIFEST_PATH,
+        )
         _save_manifest(manifest)
 
         if len(failed_sources) >= max_source_failures:
@@ -588,8 +937,18 @@ def main():
     run_entry["total_new_tokens"] = int(total_new)
     run_entry["cache_gb"] = round(disk_gb(CACHE_DIR), 3)
     run_entry["failed_sources"] = failed_sources
+    run_entry["token_artifacts"] = build_token_artifact_records(
+        sources,
+        dtype,
+        artifact_config_hash,
+    )
+    write_token_artifact_manifest(
+        run_entry["token_artifacts"],
+        TOKEN_ARTIFACT_MANIFEST_PATH,
+    )
     _save_manifest(manifest)
     print(f"  Manifest: {os.path.abspath(MANIFEST_PATH)}")
+    print(f"  Token artifact manifest: {os.path.abspath(TOKEN_ARTIFACT_MANIFEST_PATH)}")
     if failed_sources:
         print("  Failed sources (partial/skip): " + ", ".join(failed_sources))
 

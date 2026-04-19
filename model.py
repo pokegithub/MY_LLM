@@ -144,8 +144,8 @@ class GQAttention(nn.Module):
         self.hd = cfg.head_dim
         self.latent_hd = cfg.latent_head_dim
         self.ng = cfg.n_heads // cfg.n_kv_heads
-        self.local = layer_idx < cfg.n_layers // 2
-        self.window = cfg.sliding_window
+        self.local = cfg.sliding_window > 0 and layer_idx < cfg.n_layers // 2
+        self.window = int(cfg.sliding_window)
         self.backend = cfg.attention_backend
         self.use_flash = bool(cfg.use_flashattention)
         self.use_mla = bool(cfg.use_mla)
@@ -202,6 +202,18 @@ class GQAttention(nn.Module):
             causal = causal & (dist >= 0) & (dist <= self.window)
         return torch.where(causal, 0.0, float("-inf"))
 
+    def _bounded_kv(
+        self,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.local and self.window > 0 and k.shape[2] > self.window:
+            return (
+                k[:, :, -self.window:, :].contiguous(),
+                v[:, :, -self.window:, :].contiguous(),
+            )
+        return k, v
+
     def forward(
         self,
         x: torch.Tensor,
@@ -226,7 +238,7 @@ class GQAttention(nn.Module):
         if kv_cache is not None:
             k = torch.cat([kv_cache[0], k], dim=2)
             v = torch.cat([kv_cache[1], v], dim=2)
-        new_kv = (k, v)
+        new_kv = self._bounded_kv(k, v)
 
         ke = k.repeat_interleave(self.ng, dim=1)
         ve = v.repeat_interleave(self.ng, dim=1)
@@ -414,7 +426,7 @@ class Block(nn.Module):
         self.n2 = RMSNorm(cfg.dim, cfg.norm_eps)
         self.is_moe = cfg.use_moe and (layer_idx % cfg.moe_freq == 0)
         self.ffn = MoE(cfg) if self.is_moe else SwiGLU(cfg.dim, cfg.ffn_dim)
-        self.use_mod = 2 <= layer_idx < cfg.n_layers - 2
+        self.use_mod = cfg.use_mod_routing and 2 <= layer_idx < cfg.n_layers - 2
         if self.use_mod:
             self.mod_router = MoDRouter(cfg.dim)
 
@@ -471,6 +483,12 @@ class Block(nn.Module):
 class LLM(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()
+        experimental = cfg.enabled_experimental_features()
+        if experimental and not cfg.is_legacy_experimental:
+            raise ValueError(
+                "Experimental mechanisms require the explicit legacy profile: "
+                + ", ".join(experimental)
+            )
         self.cfg = cfg
         self.mem_len = cfg.n_memory_tokens
         self.n_shallow = cfg.n_layers // 2
@@ -479,9 +497,12 @@ class LLM(nn.Module):
         self.max_refine = cfg.max_refinement_loops
 
         self.embed = nn.Embedding(cfg.vocab_size, cfg.dim, padding_idx=0)
-        self.memory = nn.Parameter(
-            torch.randn(1, cfg.n_memory_tokens, cfg.dim) * 0.02
-        )
+        if self.mem_len > 0:
+            self.memory = nn.Parameter(
+                torch.randn(1, cfg.n_memory_tokens, cfg.dim) * 0.02
+            )
+        else:
+            self.register_parameter("memory", None)
         self.layers = nn.ModuleList(
             [Block(cfg, i) for i in range(cfg.n_layers)]
         )
@@ -606,8 +627,9 @@ class LLM(nn.Module):
         """
         B = ids.shape[0]
         x = self.embed(ids)
-        mem = self.memory.expand(B, -1, -1)
-        x = torch.cat([mem, x], dim=1)
+        if self.mem_len > 0:
+            mem = self.memory.expand(B, -1, -1)
+            x = torch.cat([mem, x], dim=1)
 
         total_deep_loops = self.n_loops + self.max_refine
         new_kv: List[Optional[Tuple[torch.Tensor, torch.Tensor]]] = [
@@ -678,7 +700,7 @@ class LLM(nn.Module):
         x = self.embed(ids)
         first_call = kv_cache is None
 
-        if first_call:
+        if first_call and self.mem_len > 0:
             x = torch.cat([self.memory.expand(B, -1, -1), x], dim=1)
 
         loops = (
@@ -691,7 +713,7 @@ class LLM(nn.Module):
             x, kv_cache, offset, loops
         )
 
-        if first_call:
+        if first_call and self.mem_len > 0:
             x = x[:, self.mem_len:, :]
 
         h = self.norm(x)

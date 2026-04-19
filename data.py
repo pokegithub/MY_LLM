@@ -200,7 +200,7 @@ class BinaryTokenSource:
         self.world = max(1, int(world))
 
     def __iter__(self):
-        data = np.fromfile(self.path, dtype=self.dtype)
+        data = np.memmap(self.path, dtype=self.dtype, mode="r")
         n = len(data)
         if n == 0:
             return

@@ -17,6 +17,46 @@ from core.checkpoint_io import (
 )
 
 
+SUPPORTED_QUANT_MODES = {"dynamic-int8"}
+
+
+class QuantizationExportError(RuntimeError):
+    """Raised when a requested quantization export cannot be produced."""
+
+
+def validate_quant_mode(quant_mode: str) -> None:
+    if quant_mode not in SUPPORTED_QUANT_MODES:
+        supported = ", ".join(sorted(SUPPORTED_QUANT_MODES))
+        raise ValueError(f"Unsupported quant mode: {quant_mode}. Supported: {supported}")
+
+
+def validate_quant_report_payload(report: dict) -> None:
+    if not isinstance(report, dict):
+        raise TypeError("quantization report must be a dict")
+    if not isinstance(report.get("success"), bool):
+        raise ValueError("quantization report requires boolean 'success'")
+    if report.get("quant_mode") not in SUPPORTED_QUANT_MODES:
+        raise ValueError("quantization report has unsupported quant_mode")
+
+    errors = report.get("errors", [])
+    if errors is None:
+        errors = []
+    if not isinstance(errors, list) or not all(isinstance(e, str) for e in errors):
+        raise ValueError("quantization report 'errors' must be a list of strings")
+    if "torchscript_error" in report or "onnx_error" in report:
+        raise ValueError("legacy export error fields are not allowed in reports")
+    if report["success"] and errors:
+        raise ValueError("successful quantization report cannot contain errors")
+    if not report["success"] and not errors:
+        raise ValueError("failed quantization report must explain errors")
+
+
+def _write_quant_report(report: dict, report_path: str) -> None:
+    validate_quant_report_payload(report)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+
 def _load_model(cfg: QuantConfig, device: str = "cpu") -> LLM:
     tok = BPETokenizer()
     tok.load(cfg.tokenizer_path)
@@ -48,36 +88,49 @@ def run_quantization(cfg: QuantConfig = quant_cfg):
     os.makedirs(cfg.output_dir, exist_ok=True)
     t0 = time.time()
 
-    model = _load_model(cfg, device="cpu")
+    validate_quant_mode(cfg.quant_mode)
+    if cfg.export_onnx:
+        raise QuantizationExportError("ONNX export is configured but not implemented")
 
-    if cfg.quant_mode != "dynamic-int8":
-        raise ValueError(f"Unsupported quant mode: {cfg.quant_mode}")
+    model = _load_model(cfg, device="cpu")
 
     qmodel = _dynamic_int8_quantize(model)
     qpath = os.path.join(cfg.output_dir, "model_dynamic_int8.pt")
     atomic_torch_save({"model_state_dict": qmodel.state_dict()}, qpath)
 
-    out = {
+    meta = os.path.join(cfg.output_dir, "quant_report.json")
+    report = {
+        "success": True,
         "quant_mode": cfg.quant_mode,
         "output_path": qpath,
         "export_torchscript": cfg.export_torchscript,
         "export_onnx": cfg.export_onnx,
         "elapsed_sec": round(time.time() - t0, 3),
+        "errors": [],
     }
 
     if cfg.export_torchscript:
-        sample = torch.randint(0, model_cfg.vocab_size, (1, min(cfg.max_seq_len, 64)), dtype=torch.long)
+        sample = torch.randint(
+            0,
+            model_cfg.vocab_size,
+            (1, min(cfg.max_seq_len, 64)),
+            dtype=torch.long,
+        )
         try:
             ts = torch.jit.trace(qmodel, (sample,), strict=False)
             tspath = os.path.join(cfg.output_dir, "model_dynamic_int8.ts")
             ts.save(tspath)
-            out["torchscript_path"] = tspath
-        except Exception as e:
-            out["torchscript_error"] = str(e)[:200]
+            report["torchscript_path"] = tspath
+        except (RuntimeError, TypeError, ValueError) as exc:
+            message = f"TorchScript export failed: {str(exc)[:200]}"
+            report["success"] = False
+            report["errors"].append(message)
+            report["elapsed_sec"] = round(time.time() - t0, 3)
+            _write_quant_report(report, meta)
+            raise QuantizationExportError(message) from exc
 
-    meta = os.path.join(cfg.output_dir, "quant_report.json")
-    with open(meta, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2)
+    report["elapsed_sec"] = round(time.time() - t0, 3)
+    _write_quant_report(report, meta)
 
     print(f"Quantization complete: {qpath}")
     print(f"Report: {meta}")

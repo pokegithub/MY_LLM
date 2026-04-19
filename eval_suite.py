@@ -8,6 +8,7 @@ import math
 import re
 import random
 import logging
+import hashlib
 import torch
 import torch.nn.functional as F
 from typing import List, Dict, Tuple, Optional
@@ -23,12 +24,49 @@ except Exception as exc:
     LOGGER.warning("datasets import unavailable; real benchmark loaders disabled: %s", exc)
 
 sys.path.insert(0, ".")
-from config import EvalConfig, model_cfg, eval_cfg
+from config import EvalConfig, model_cfg, eval_cfg, runtime_config_dict
 from tokenizer import BPETokenizer
 from model import LLM
 from core.sequence_ops import gather_token_log_probs, next_token_cross_entropy
 from security.validator import execute_python_snippet
-from core.checkpoint_io import extract_state_dict, safe_torch_load
+from core.checkpoint_io import extract_state_dict, pick_checkpoint_file, safe_torch_load
+
+
+class EvalIntegrityError(RuntimeError):
+    """Raised when an evaluation would produce misleading evidence."""
+
+
+def _json_hash(payload: Dict) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def inspect_checkpoint_path(path: str) -> Dict:
+    meta = {
+        "configured_path": path,
+        "exists": os.path.exists(path),
+        "selected_checkpoint": None,
+        "selected_checkpoint_exists": False,
+        "sha256_sidecar_exists": False,
+        "sha256_sidecar": None,
+        "load_status": "not_loaded",
+        "error": "",
+    }
+    try:
+        selected = pick_checkpoint_file(path)
+    except FileNotFoundError as exc:
+        meta["load_status"] = "missing"
+        meta["error"] = str(exc)
+        return meta
+
+    meta["selected_checkpoint"] = str(selected)
+    meta["selected_checkpoint_exists"] = selected.exists()
+    sidecar = selected.with_suffix(selected.suffix + ".sha256")
+    if sidecar.exists():
+        meta["sha256_sidecar_exists"] = True
+        with open(sidecar, "r", encoding="utf-8") as handle:
+            meta["sha256_sidecar"] = handle.read().split()[0].strip()
+    return meta
 
 
 def _set_seed(seed: int = 42):
@@ -128,10 +166,17 @@ def _choose_eval_set(
     if len(real_items) >= min_required:
         return real_items, {
             "benchmark": name,
+            "dataset_name": name,
+            "split": "real",
+            "run_mode": "real",
+            "sample_count": len(real_items),
+            "results_are_measured": True,
+            "capability_evidence": "real_benchmark",
             "used_real": True,
             "real_count": len(real_items),
             "fallback_count": 0,
             "min_required": min_required,
+            "warning": "",
         }
     if cfg.strict_real_benchmarks and not cfg.allow_toy_fallback:
         raise RuntimeError(
@@ -140,10 +185,17 @@ def _choose_eval_set(
         )
     return fallback_items, {
         "benchmark": name,
+        "dataset_name": name,
+        "split": "toy",
+        "run_mode": "toy",
+        "sample_count": len(fallback_items),
+        "results_are_measured": True,
+        "capability_evidence": "toy_smoke_only",
         "used_real": False,
         "real_count": len(real_items),
         "fallback_count": len(fallback_items),
         "min_required": min_required,
+        "warning": "Fallback/toy samples are smoke tests, not benchmark evidence.",
     }
 
 
@@ -153,21 +205,33 @@ def _choose_eval_set(
 
 def load_model(
     cfg: EvalConfig, device: str
-) -> Tuple[LLM, BPETokenizer]:
+) -> Tuple[LLM, BPETokenizer, Dict]:
     tok = BPETokenizer()
     tok.load(cfg.tokenizer_path)
     model_cfg.vocab_size = tok.vocab_size_
 
+    checkpoint_meta = inspect_checkpoint_path(cfg.checkpoint_path)
+    if checkpoint_meta["load_status"] == "missing":
+        raise EvalIntegrityError(
+            "Evaluation requires a valid checkpoint. "
+            f"{checkpoint_meta['error']}"
+        )
+
     model = LLM(model_cfg).to(device)
-    if os.path.exists(cfg.checkpoint_path):
-        try:
-            st, path = safe_torch_load(cfg.checkpoint_path, map_location=device)
-            model.load_state_dict(extract_state_dict(st))
-            print(f"  Model loaded: {path}")
-        except FileNotFoundError:
-            print("  No model checkpoint found; evaluating initialized model.")
+    try:
+        st, path = safe_torch_load(cfg.checkpoint_path, map_location=device)
+        model.load_state_dict(extract_state_dict(st))
+        checkpoint_meta["load_status"] = "loaded"
+        checkpoint_meta["loaded_checkpoint"] = str(path)
+        print(f"  Model loaded: {path}")
+    except Exception as exc:
+        checkpoint_meta["load_status"] = "failed"
+        checkpoint_meta["error"] = str(exc)
+        raise EvalIntegrityError(
+            f"Failed to load evaluation checkpoint: {cfg.checkpoint_path}"
+        ) from exc
     model.eval()
-    return model, tok
+    return model, tok, checkpoint_meta
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +670,30 @@ def build_scorecard(results: Dict) -> Dict:
     return metrics
 
 
+def summarize_eval_run_mode(benchmark_integrity: Dict[str, Dict]) -> Dict:
+    modes = {
+        str(meta.get("run_mode", "unknown"))
+        for meta in benchmark_integrity.values()
+    }
+    if not benchmark_integrity:
+        run_mode = "unverified"
+    elif modes == {"real"}:
+        run_mode = "real"
+    elif "toy" in modes:
+        run_mode = "mixed_or_toy"
+    else:
+        run_mode = "unverified"
+    return {
+        "run_mode": run_mode,
+        "real_benchmark_evidence": run_mode == "real",
+        "warnings": [
+            meta.get("warning", "")
+            for meta in benchmark_integrity.values()
+            if meta.get("warning")
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # 6. Uncertainty calibration
 # ---------------------------------------------------------------------------
@@ -689,7 +777,7 @@ def eval_calibration(
 def run_evaluation(cfg: EvalConfig = eval_cfg):
     _set_seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, tok = load_model(cfg, device)
+    model, tok, checkpoint_meta = load_model(cfg, device)
     os.makedirs(cfg.output_dir, exist_ok=True)
 
     results = {}
@@ -748,6 +836,16 @@ def run_evaluation(cfg: EvalConfig = eval_cfg):
         },
     ]
     benchmark_integrity: Dict[str, Dict] = {}
+    benchmark_integrity["perplexity"] = {
+        "benchmark": "perplexity_smoke_texts",
+        "dataset_name": "built_in_smoke_texts",
+        "split": "smoke",
+        "run_mode": "smoke",
+        "sample_count": len(ppl_texts),
+        "results_are_measured": True,
+        "capability_evidence": "smoke_only",
+        "warning": "Built-in perplexity texts are smoke checks, not benchmark evidence.",
+    }
     mc_questions, mc_meta = _choose_eval_set(
         "multiple-choice",
         _load_real_mc_questions(limit=max(200, cfg.min_real_mc_samples)),
@@ -865,13 +963,26 @@ def run_evaluation(cfg: EvalConfig = eval_cfg):
 
     # --- Summary ---
     elapsed = time.time() - t_total
+    eval_mode = summarize_eval_run_mode(
+        {
+            key: value
+            for key, value in benchmark_integrity.items()
+            if key != "perplexity"
+        }
+    )
     results["metadata"] = {
         "elapsed_seconds": round(elapsed, 1),
         "device": device,
         "checkpoint": cfg.checkpoint_path,
+        "checkpoint_integrity": checkpoint_meta,
+        "checkpoint_loaded": checkpoint_meta.get("load_status") == "loaded",
+        "model_config_hash": _json_hash(runtime_config_dict().get("model", {})),
         "strict_real_benchmarks": bool(cfg.strict_real_benchmarks),
         "allow_toy_fallback": bool(cfg.allow_toy_fallback),
         "benchmark_integrity": benchmark_integrity,
+        "run_mode": eval_mode["run_mode"],
+        "real_benchmark_evidence": eval_mode["real_benchmark_evidence"],
+        "warnings": eval_mode["warnings"],
         "model_params": sum(
             p.numel() for p in model.parameters()
         ),

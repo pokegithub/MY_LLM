@@ -9,18 +9,38 @@ def jaccard_overlap(a: Iterable[str], b: Iterable[str]) -> float:
     return len(sa & sb) / max(len(sa | sb), 1)
 
 
-def is_contaminated(train_sources, benchmark_sources, threshold: float = 0.2):
-    """
-    Infer contamination risk from benchmark-source protection coverage.
-
-    train_sources is expected to be the configured exclusion list
-    (sources blocked from training). Higher overlap with benchmark_sources
-    means safer protection, so contamination risk is the inverse.
-    """
-    protected = set(train_sources or [])
+def benchmark_exclusion_coverage(
+    excluded_sources,
+    benchmark_sources,
+) -> float:
+    """Return how much of the benchmark source list is explicitly excluded."""
+    protected = set(excluded_sources or [])
     benchmarks = set(benchmark_sources or [])
     if not benchmarks:
-        return False, 1.0
-    coverage = len(protected & benchmarks) / len(benchmarks)
-    contaminated = coverage < threshold
-    return contaminated, coverage
+        return 1.0
+    return len(protected & benchmarks) / len(benchmarks)
+
+
+def has_low_benchmark_exclusion_coverage(
+    excluded_sources,
+    benchmark_sources,
+    threshold: float = 0.2,
+):
+    """
+    Flag weak source-level benchmark exclusion coverage.
+
+    This is not content contamination detection. It does not compare examples,
+    hashes, text spans, or generated outputs. It only checks whether configured
+    excluded source IDs cover the benchmark source IDs.
+    """
+    coverage = benchmark_exclusion_coverage(excluded_sources, benchmark_sources)
+    return coverage < threshold, coverage
+
+
+def is_contaminated(train_sources, benchmark_sources, threshold: float = 0.2):
+    """Backward-compatible alias for source-exclusion coverage checks."""
+    return has_low_benchmark_exclusion_coverage(
+        train_sources,
+        benchmark_sources,
+        threshold=threshold,
+    )

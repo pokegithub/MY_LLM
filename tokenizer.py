@@ -20,6 +20,12 @@ from security.validator import get_allowed_data_roots, safe_load_json
 
 LOGGER = get_logger("tokenizer")
 
+DEFAULT_AUDIT_SAMPLES = {
+    "prose": "The quick brown fox jumps over the lazy dog.",
+    "code": "def add(a, b):\n    return a + b\n",
+    "chat": "<|user|>\nHello<|end|>\n<|assistant|>\nHi<|end|>",
+}
+
 
 def _build_byte_encoder() -> Dict[int, str]:
     bs = (list(range(ord("!"), ord("~") + 1)) +
@@ -404,6 +410,53 @@ class BPETokenizer:
         if add_generation_prompt:
             text += f"{self.AST}\n"
         return self.encode(text, add_bos=True)
+
+    def audit(self, samples: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        samples = samples or DEFAULT_AUDIT_SAMPLES
+        specials = []
+        seen_ids = set()
+        duplicate_ids = []
+        for token in self.SPECIAL:
+            token_id = self.encoder.get(token)
+            decoder_token = self.decoder.get(token_id) if token_id is not None else None
+            if token_id in seen_ids:
+                duplicate_ids.append(token_id)
+            if token_id is not None:
+                seen_ids.add(token_id)
+            specials.append(
+                {
+                    "token": token,
+                    "id": token_id,
+                    "present": token_id is not None,
+                    "decoder_matches": decoder_token == token,
+                }
+            )
+
+        sample_reports = []
+        for name, text in samples.items():
+            ids = self.encode(text, add_bos=False, add_eos=False)
+            decoded = self.decode(ids, skip_special=False)
+            sample_reports.append(
+                {
+                    "name": name,
+                    "chars": len(text),
+                    "tokens": len(ids),
+                    "chars_per_token": len(text) / max(len(ids), 1),
+                    "roundtrip_exact": decoded == text,
+                }
+            )
+
+        return {
+            "vocab_size": self.vocab_size_,
+            "merge_count": len(self.merges),
+            "special_tokens": specials,
+            "special_tokens_ok": all(
+                item["present"] and item["decoder_matches"]
+                for item in specials
+            ) and not duplicate_ids,
+            "duplicate_special_ids": duplicate_ids,
+            "samples": sample_reports,
+        }
 
     def __repr__(self) -> str:
         return (f"BPETokenizer(vocab={self.vocab_size_:,}, "

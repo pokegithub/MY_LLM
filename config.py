@@ -7,32 +7,53 @@ from core.logging import get_logger
 
 LOGGER = get_logger("config")
 
+EDGE_0_5B_GQA = "edge_0_5b_gqa"
+LOCAL_1_5B_GQA = "local_1_5b_gqa"
+WORKSTATION_3B_GQA = "workstation_3b_gqa"
+LEGACY_EXPERIMENTAL_439M = "legacy_experimental_439m"
+DEPLOY_2GB_EDGE = "2gb_edge"
+DEPLOY_8GB_LAPTOP = "8gb_laptop"
+DEPLOY_16GB_WORKSTATION = "16gb_workstation"
+MODEL_PROFILE_NAMES = (
+    EDGE_0_5B_GQA,
+    LOCAL_1_5B_GQA,
+    WORKSTATION_3B_GQA,
+    LEGACY_EXPERIMENTAL_439M,
+)
+DEPLOYMENT_TIER_NAMES = (
+    DEPLOY_2GB_EDGE,
+    DEPLOY_8GB_LAPTOP,
+    DEPLOY_16GB_WORKSTATION,
+)
+
 
 @dataclass
 class ModelConfig:
+    profile_name            : str   = EDGE_0_5B_GQA
     vocab_size              : int   = 50000
     pad_token_id            : int   = 0
     bos_token_id            : int   = 1
     eos_token_id            : int   = 2
-    dim                     : int   = 1024
-    n_layers                : int   = 16
+    dim                     : int   = 1536
+    n_layers                : int   = 18
     n_heads                 : int   = 16
     n_kv_heads              : int   = 4
     max_seq_len             : int   = 2048
-    ffn_dim                 : int   = 2816
-    use_moe                 : bool  = True
+    ffn_dim                 : int   = 4096
+    use_moe                 : bool  = False
     n_experts               : int   = 8
     n_experts_active        : int   = 2
     moe_freq                : int   = 2
-    n_memory_tokens         : int   = 64
-    n_loops                 : int   = 2
-    yarn_scale              : float = 4.0
+    n_memory_tokens         : int   = 0
+    n_loops                 : int   = 1
+    yarn_scale              : float = 1.0
     sliding_window          : int   = 512
     adaptive_loop_threshold : float = 0.4
-    max_refinement_loops    : int   = 1
-    use_confidence_head     : bool  = True
+    max_refinement_loops    : int   = 0
+    use_confidence_head     : bool  = False
     confidence_dim          : int   = 3
-    use_residual_gates      : bool  = True
+    use_residual_gates      : bool  = False
+    use_mod_routing         : bool  = False
     norm_eps                : float = 1e-6
     qk_norm_eps             : float = 1e-6
     rope_theta              : float = 500000.0
@@ -44,6 +65,11 @@ class ModelConfig:
     latent_head_dim         : int   = field(init=False)
 
     def __post_init__(self):
+        if self.profile_name not in MODEL_PROFILE_NAMES:
+            raise ValueError(
+                "profile_name must be one of: "
+                + ", ".join(MODEL_PROFILE_NAMES)
+            )
         assert self.dim % self.n_heads == 0, (
             f"dim ({self.dim}) must be divisible by n_heads ({self.n_heads})"
         )
@@ -72,6 +98,365 @@ class ModelConfig:
         self.latent_head_dim = max(
             1, int(self.head_dim * self.mla_compression_ratio)
         )
+        experimental = self.enabled_experimental_features()
+        if experimental and not self.is_legacy_experimental:
+            raise ValueError(
+                "Experimental mechanisms require profile_name="
+                f"{LEGACY_EXPERIMENTAL_439M}: {', '.join(experimental)}"
+            )
+
+    @property
+    def is_legacy_experimental(self) -> bool:
+        return self.profile_name == LEGACY_EXPERIMENTAL_439M
+
+    def enabled_experimental_features(self) -> Tuple[str, ...]:
+        enabled = []
+        if self.use_moe:
+            enabled.append("use_moe")
+        if self.n_memory_tokens > 0:
+            enabled.append("n_memory_tokens")
+        if self.n_loops > 1:
+            enabled.append("n_loops")
+        if self.max_refinement_loops > 0:
+            enabled.append("max_refinement_loops")
+        if self.use_confidence_head:
+            enabled.append("use_confidence_head")
+        if self.use_residual_gates:
+            enabled.append("use_residual_gates")
+        if self.use_mod_routing:
+            enabled.append("use_mod_routing")
+        if self.use_mla:
+            enabled.append("use_mla")
+        return tuple(enabled)
+
+
+MODEL_PROFILES: Dict[str, Dict[str, Any]] = {
+    EDGE_0_5B_GQA: {
+        "profile_name": EDGE_0_5B_GQA,
+        "dim": 1536,
+        "n_layers": 18,
+        "n_heads": 16,
+        "n_kv_heads": 4,
+        "ffn_dim": 4096,
+        "max_seq_len": 2048,
+        "sliding_window": 512,
+    },
+    LOCAL_1_5B_GQA: {
+        "profile_name": LOCAL_1_5B_GQA,
+        "dim": 2048,
+        "n_layers": 28,
+        "n_heads": 16,
+        "n_kv_heads": 4,
+        "ffn_dim": 6144,
+        "max_seq_len": 4096,
+        "sliding_window": 1024,
+    },
+    WORKSTATION_3B_GQA: {
+        "profile_name": WORKSTATION_3B_GQA,
+        "dim": 2560,
+        "n_layers": 36,
+        "n_heads": 20,
+        "n_kv_heads": 4,
+        "ffn_dim": 8192,
+        "max_seq_len": 4096,
+        "sliding_window": 2048,
+    },
+    LEGACY_EXPERIMENTAL_439M: {
+        "profile_name": LEGACY_EXPERIMENTAL_439M,
+        "dim": 1024,
+        "n_layers": 16,
+        "n_heads": 16,
+        "n_kv_heads": 4,
+        "ffn_dim": 2816,
+        "max_seq_len": 2048,
+        "use_moe": True,
+        "n_experts": 8,
+        "n_experts_active": 2,
+        "moe_freq": 2,
+        "n_memory_tokens": 64,
+        "n_loops": 2,
+        "yarn_scale": 4.0,
+        "sliding_window": 512,
+        "max_refinement_loops": 1,
+        "use_confidence_head": True,
+        "use_residual_gates": True,
+        "use_mod_routing": True,
+    },
+}
+
+
+@dataclass(frozen=True)
+class DeploymentTier:
+    name: str
+    target_vram_gb: int
+    model_profile: str
+    intended_model_size_band: str
+    quantization_expectation: str
+    active_context_tokens: int
+    offload_expectation: str
+    rag_expectation: str
+    caveats: Tuple[str, ...]
+    external_unverified_targets: Tuple[str, ...] = (
+        "GGUF/llama.cpp",
+        "GPTQ",
+        "AWQ",
+        "vLLM",
+    )
+
+
+REFERENCE_RUNTIME_NOTE = (
+    "PyTorch CPU/GPU model execution is the current in-repo reference path. "
+    "The serving boundary is fail-closed until a real model backend is wired."
+)
+IMPLEMENTED_QUANTIZATION_NOTE = (
+    "The only implemented in-repo quantization mode is CPU dynamic-int8 for "
+    "torch Linear modules, with optional TorchScript export when tracing succeeds."
+)
+
+
+DEPLOYMENT_TIERS: Dict[str, DeploymentTier] = {
+    DEPLOY_2GB_EDGE: DeploymentTier(
+        name=DEPLOY_2GB_EDGE,
+        target_vram_gb=2,
+        model_profile=EDGE_0_5B_GQA,
+        intended_model_size_band=(
+            "edge/sub-0.5B to roughly 0.5B dense; larger models require "
+            "external quantized runtimes/offload not verified by this repo"
+        ),
+        quantization_expectation=(
+            "2GB VRAM is edge/offload territory. Full PyTorch fp16/bf16 "
+            "GPU inference is not claimed; 4-bit/GGUF-style paths are external "
+            "and unverified here."
+        ),
+        active_context_tokens=512,
+        offload_expectation=(
+            "CPU fallback or external offload runtime expected; repo only "
+            "verifies PyTorch reference behavior."
+        ),
+        rag_expectation=(
+            "RAG is expected for document workflows; brute-force long context "
+            "is not realistic at this tier."
+        ),
+        caveats=(
+            "2GB VRAM does not make a 3B/5B model comfortable on GPU.",
+            "KV cache grows with active context, especially in global layers.",
+            "Deployment tier metadata is not validated runtime support.",
+        ),
+    ),
+    DEPLOY_8GB_LAPTOP: DeploymentTier(
+        name=DEPLOY_8GB_LAPTOP,
+        target_vram_gb=8,
+        model_profile=EDGE_0_5B_GQA,
+        intended_model_size_band=(
+            "roughly 0.5B PyTorch reference path, or larger only with "
+            "quantization/offload paths not verified here"
+        ),
+        quantization_expectation=(
+            "Dynamic-int8 CPU export is implemented; 4-bit GPU/local-runtime "
+            "formats are not implemented in this repo."
+        ),
+        active_context_tokens=1024,
+        offload_expectation=(
+            "CPU fallback may be usable for slow local inference; GPU use still "
+            "depends on checkpoint size, dtype, context, and runtime overhead."
+        ),
+        rag_expectation=(
+            "RAG is recommended for long documents instead of increasing context "
+            "blindly."
+        ),
+        caveats=(
+            "8GB does not validate laptop deployment for every checkpoint.",
+            "Lower-bound estimates exclude allocator and framework overhead.",
+            "External runtimes remain future integration targets.",
+        ),
+    ),
+    DEPLOY_16GB_WORKSTATION: DeploymentTier(
+        name=DEPLOY_16GB_WORKSTATION,
+        target_vram_gb=16,
+        model_profile=LOCAL_1_5B_GQA,
+        intended_model_size_band=(
+            "local 1.5B-class reference target; 3B-class use is conditional on "
+            "quantization/offload and has not been repo-verified"
+        ),
+        quantization_expectation=(
+            "PyTorch fp16/bf16 is the reference path; dynamic-int8 CPU export "
+            "exists, but GPTQ/AWQ/GGUF/vLLM are not implemented here."
+        ),
+        active_context_tokens=2048,
+        offload_expectation=(
+            "GPU inference may be feasible for smaller profiles; larger profiles "
+            "need measured memory checks, not profile names."
+        ),
+        rag_expectation=(
+            "RAG remains the practical path for large private document sets."
+        ),
+        caveats=(
+            "16GB is not proof that workstation_3b_gqa fits with useful context.",
+            "Global-layer KV cache still grows with context.",
+            "Deployment readiness is separate from training success and benchmark quality.",
+        ),
+    ),
+}
+
+
+def available_model_profiles() -> Tuple[str, ...]:
+    return MODEL_PROFILE_NAMES
+
+
+def available_deployment_tiers() -> Tuple[str, ...]:
+    return DEPLOYMENT_TIER_NAMES
+
+
+def get_model_profile(profile_name: str) -> Dict[str, Any]:
+    try:
+        return dict(MODEL_PROFILES[profile_name])
+    except KeyError as exc:
+        raise ValueError(
+            "Unknown model profile. Expected one of: "
+            + ", ".join(MODEL_PROFILE_NAMES)
+        ) from exc
+
+
+def get_deployment_tier(name: str) -> Dict[str, Any]:
+    try:
+        return asdict(DEPLOYMENT_TIERS[name])
+    except KeyError as exc:
+        raise ValueError(
+            "Unknown deployment tier. Expected one of: "
+            + ", ".join(DEPLOYMENT_TIER_NAMES)
+        ) from exc
+
+
+def build_model_config(profile_name: str = EDGE_0_5B_GQA, **overrides: Any) -> ModelConfig:
+    values = get_model_profile(profile_name)
+    values.update(overrides)
+    values["profile_name"] = profile_name
+    return ModelConfig(**values)
+
+
+def _apply_model_profile(target: ModelConfig, profile_name: str) -> None:
+    for key, value in get_model_profile(profile_name).items():
+        setattr(target, key, value)
+
+
+def estimate_dense_parameter_count_lower_bound(
+    cfg: ModelConfig,
+    vocab_size: Optional[int] = None,
+) -> Optional[int]:
+    """Estimate dense production parameter count; return None for legacy paths."""
+    if cfg.enabled_experimental_features():
+        return None
+    effective_vocab = int(vocab_size if vocab_size is not None else cfg.vocab_size)
+    kv_dim = cfg.n_kv_heads * cfg.head_dim
+    attention_params = (
+        (cfg.dim * cfg.dim)
+        + (2 * cfg.dim * kv_dim)
+        + (cfg.dim * cfg.dim)
+    )
+    ffn_params = 3 * cfg.dim * cfg.ffn_dim
+    norm_params = 2 * cfg.dim
+    return (
+        (effective_vocab * cfg.dim)
+        + (cfg.n_layers * (attention_params + ffn_params + norm_params))
+        + cfg.dim
+    )
+
+
+def estimate_weight_memory_lower_bound_gb(
+    cfg: ModelConfig,
+    *,
+    bytes_per_param: int = 2,
+    vocab_size: Optional[int] = None,
+) -> Optional[float]:
+    params = estimate_dense_parameter_count_lower_bound(
+        cfg,
+        vocab_size=vocab_size,
+    )
+    if params is None:
+        return None
+    if int(bytes_per_param) <= 0:
+        raise ValueError("bytes_per_param must be > 0")
+    return (params * int(bytes_per_param)) / (1024 ** 3)
+
+
+def estimate_kv_cache_lower_bound_gb(
+    cfg: ModelConfig,
+    *,
+    active_context_tokens: int,
+    batch_size: int = 1,
+    bytes_per_value: int = 2,
+) -> float:
+    if int(active_context_tokens) <= 0:
+        raise ValueError("active_context_tokens must be > 0")
+    if int(batch_size) <= 0:
+        raise ValueError("batch_size must be > 0")
+    if int(bytes_per_value) <= 0:
+        raise ValueError("bytes_per_value must be > 0")
+
+    local_layers = cfg.n_layers // 2 if cfg.sliding_window > 0 else 0
+    global_layers = cfg.n_layers - local_layers
+    local_tokens = min(int(active_context_tokens), int(cfg.sliding_window))
+    token_slots = (local_layers * local_tokens) + (
+        global_layers * int(active_context_tokens)
+    )
+    values = (
+        int(batch_size)
+        * token_slots
+        * 2
+        * cfg.n_kv_heads
+        * cfg.head_dim
+    )
+    return (values * int(bytes_per_value)) / (1024 ** 3)
+
+
+def build_deployment_report(
+    tier_name: str,
+    *,
+    vocab_size: Optional[int] = None,
+    weight_bytes_per_param: int = 2,
+    kv_bytes_per_value: int = 2,
+    batch_size: int = 1,
+) -> Dict[str, Any]:
+    tier = get_deployment_tier(tier_name)
+    cfg = build_model_config(tier["model_profile"])
+    params = estimate_dense_parameter_count_lower_bound(cfg, vocab_size=vocab_size)
+    weight_gb = estimate_weight_memory_lower_bound_gb(
+        cfg,
+        bytes_per_param=weight_bytes_per_param,
+        vocab_size=vocab_size,
+    )
+    kv_gb = estimate_kv_cache_lower_bound_gb(
+        cfg,
+        active_context_tokens=int(tier["active_context_tokens"]),
+        batch_size=batch_size,
+        bytes_per_value=kv_bytes_per_value,
+    )
+    return {
+        "tier": tier,
+        "model_profile": tier["model_profile"],
+        "profile_is_validated_runtime_support": False,
+        "reference_runtime": REFERENCE_RUNTIME_NOTE,
+        "implemented_quantization": IMPLEMENTED_QUANTIZATION_NOTE,
+        "repo_verified_external_runtimes": [],
+        "external_unverified_targets": list(tier["external_unverified_targets"]),
+        "estimates": {
+            "estimate_scope": "lower_bound_only",
+            "dense_params_lower_bound": params,
+            "weight_memory_lower_bound_gb": (
+                round(weight_gb, 3) if weight_gb is not None else None
+            ),
+            "kv_cache_lower_bound_gb": round(kv_gb, 3),
+            "active_context_tokens": int(tier["active_context_tokens"]),
+            "batch_size": int(batch_size),
+            "weight_bytes_per_param": int(weight_bytes_per_param),
+            "kv_bytes_per_value": int(kv_bytes_per_value),
+        },
+        "caveats": list(tier["caveats"]) + [
+            "Lower-bound memory is not a full deployment requirement estimate.",
+            "No throughput or latency claim is made by this report.",
+            "A deployment profile does not prove training quality or benchmark capability.",
+        ],
+    }
 
 
 @dataclass
@@ -125,7 +510,10 @@ class TrainConfig:
     z_loss_coeff      : float = 0.001
     unc_loss_coeff    : float = 0.1
 
-    # --- Data quality ---
+    # --- Legacy/declared data-quality knobs ---
+    # Current data.py does not implement n-gram dedup or quality-threshold
+    # filtering. These fields remain for config compatibility until a real
+    # data-quality pass wires them into an implemented pipeline.
     dedup_ngram_size  : int   = 13
     dedup_threshold   : float = 0.8
     min_doc_length    : int   = 50
@@ -133,8 +521,8 @@ class TrainConfig:
     quality_threshold : float = 0.3
 
     # --- Data integrity ---
-    # Exclude common benchmark datasets from pretrain/tokenizer corpora
-    # to reduce train/eval contamination risk.
+    # Exclude common benchmark source IDs from pretrain/tokenizer corpora.
+    # This reduces source-overlap risk; it is not content contamination detection.
     excluded_benchmark_sources: Tuple[str, ...] = (
         "truthful_qa",
         "google/boolq",
@@ -395,6 +783,9 @@ def apply_overrides(
                 unknown_fields.append(f"{section} (non-mapping override)")
                 continue
 
+            if target is model_cfg and "profile_name" in values:
+                _apply_model_profile(target, str(values["profile_name"]))
+
             for key, value in values.items():
                 attr = str(key).strip()
                 if hasattr(target, attr):
@@ -449,17 +840,22 @@ def show_config():
     LOGGER.info("%s", "=" * 60)
     LOGGER.info("Configuration")
     LOGGER.info("%s", "=" * 60)
+    LOGGER.info("Model profile     : %s", model_cfg.profile_name)
     LOGGER.info("Architecture      : %sd x %sL x %sH", model_cfg.dim, model_cfg.n_layers, model_cfg.n_heads)
     LOGGER.info("Vocab size        : %s", f"{model_cfg.vocab_size:,}")
     LOGGER.info("Memory tokens     : %s", model_cfg.n_memory_tokens)
     LOGGER.info("Recursive loops   : %s", model_cfg.n_loops)
     LOGGER.info("Max refinement    : %s", model_cfg.max_refinement_loops)
-    LOGGER.info(
-        "MoE               : %sE / %sA every %s layers",
-        model_cfg.n_experts,
-        model_cfg.n_experts_active,
-        model_cfg.moe_freq,
-    )
+    if model_cfg.use_moe:
+        LOGGER.info(
+            "MoE               : %sE / %sA every %s layers",
+            model_cfg.n_experts,
+            model_cfg.n_experts_active,
+            model_cfg.moe_freq,
+        )
+    else:
+        LOGGER.info("MoE               : disabled")
+    LOGGER.info("MoD routing       : %s", model_cfg.use_mod_routing)
     LOGGER.info("Residual gates    : %s", model_cfg.use_residual_gates)
     LOGGER.info(
         "YaRN scale        : %sx (%s)",

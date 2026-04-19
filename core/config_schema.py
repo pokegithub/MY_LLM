@@ -12,6 +12,7 @@ class _StrictModel(BaseModel):
 
 
 class ModelSection(_StrictModel):
+    profile_name: str
     vocab_size: int = Field(ge=128)
     pad_token_id: int = Field(ge=0)
     bos_token_id: int = Field(ge=0)
@@ -35,6 +36,7 @@ class ModelSection(_StrictModel):
     use_confidence_head: bool
     confidence_dim: int = Field(ge=1)
     use_residual_gates: bool
+    use_mod_routing: bool
     norm_eps: float = Field(gt=0)
     qk_norm_eps: float = Field(
         gt=0,
@@ -66,6 +68,13 @@ class ModelSection(_StrictModel):
 
     @model_validator(mode="after")
     def validate_head_relations(self):
+        from config import LEGACY_EXPERIMENTAL_439M, MODEL_PROFILE_NAMES
+
+        if self.profile_name not in MODEL_PROFILE_NAMES:
+            raise ValueError(
+                "model.profile_name must be one of: "
+                + ", ".join(MODEL_PROFILE_NAMES)
+            )
         if self.dim % self.n_heads != 0:
             raise ValueError("model.dim must be divisible by model.n_heads")
         if self.n_heads % self.n_kv_heads != 0:
@@ -88,6 +97,28 @@ class ModelSection(_StrictModel):
             raise ValueError(
                 "model.latent_head_dim must equal "
                 "int(model.head_dim * model.mla_compression_ratio)"
+            )
+        experimental = []
+        if self.use_moe:
+            experimental.append("use_moe")
+        if self.n_memory_tokens > 0:
+            experimental.append("n_memory_tokens")
+        if self.n_loops > 1:
+            experimental.append("n_loops")
+        if self.max_refinement_loops > 0:
+            experimental.append("max_refinement_loops")
+        if self.use_confidence_head:
+            experimental.append("use_confidence_head")
+        if self.use_residual_gates:
+            experimental.append("use_residual_gates")
+        if self.use_mod_routing:
+            experimental.append("use_mod_routing")
+        if self.use_mla:
+            experimental.append("use_mla")
+        if experimental and self.profile_name != LEGACY_EXPERIMENTAL_439M:
+            raise ValueError(
+                "experimental model fields require legacy profile: "
+                + ", ".join(experimental)
             )
         return self
 

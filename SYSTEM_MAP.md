@@ -17,7 +17,21 @@
 - Scope: Full read-through of all in-repo Python modules (excluding `.venv`).
 - Module count: 48 Python modules.
 - Runtime verification:
-  - `LLM(model_cfg)` parameter cardinality = 439,613,216.
+  - Default production-profile parameter cardinality is unverified in this pass.
+  - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
+
+### Pass 1 truthfulness update
+
+- Date: 2026-04-19
+- Scope: CLI status/audit truthfulness, serving stub removal, quantization report integrity, and related tests only.
+- `status` uses ASCII-safe filesystem status rows.
+- `audit` is intentionally narrow for this pass: compile check, tokenizer smoke, status command health, fake serving detection, and quantization report integrity.
+- `serving/server.py` no longer returns echo responses; it fails closed until a real model backend is configured.
+- `quant_utils.py` supports CPU dynamic int8 only. Requested TorchScript export failures are fatal and cannot be recorded as successful quantization.
+- Training quality, benchmark quality, dataset integrity, and production readiness remain unverified by this pass.
+- `status` must route training through `train-preflight`; direct `train` recommendation before preflight is misleading.
+- `token-manifest` reconstructs local token artifact metadata from `.bin` files only. It does not reconstruct licensing, filtering, deduplication, shuffle, or contamination provenance.
+- `deps`, `token-integrity`, and `validate-real-path` provide machine-readable readiness evidence. `validate-real-path` performs a tiny real-token smoke path only and makes no model-quality claim.
 
 ---
 
@@ -136,7 +150,8 @@ Primary architectural planes:
 - Orchestration plane:
   - Command routing and staged workflow in `run.py`
 - Model plane:
-  - Recursive transformer with GQA + MoE + confidence head in `model.py`
+  - Default dense decoder-only GQA transformer in `model.py`
+  - Legacy experimental profile gates MoE, memory tokens, recursive loops, MoD routing, and confidence head
   - Attention kernels and QK-Norm in `core/ops.py`
 - Data plane:
   - Download/cache materialization in `download_data.py`
@@ -146,14 +161,14 @@ Primary architectural planes:
   - Shared scheduling and step cadence in `core/lr_schedule.py`, `core/training_lifecycle.py`
 - Evaluation plane:
   - Core evaluator in `eval_suite.py`
-  - Contamination/manifests/statistics in `eval_harness/*`
-  - Report-card scaling harness in `eval/benchmark_harness.py`
+  - Benchmark exclusion coverage, manifests, and statistics in `eval_harness/*`
+  - Report-card harness and disabled external-comparison warning outputs in `eval/benchmark_harness.py`
 - Integrity and telemetry plane:
   - Checkpoint integrity in `core/checkpoint_io.py`
   - Input and execution policy in `security/validator.py`
   - Step/hardware/security telemetry in `observability/*`
 - Serving/safety plane:
-  - Stub service endpoint in `serving/server.py`
+  - Fail-closed serving boundary in `serving/server.py`
   - Prompt/output filters in `safety/*`
 
 ---
@@ -167,6 +182,12 @@ Primary architectural planes:
 - `download-safe`
 - `download-core`
 - `download-status`
+- `token-manifest`
+- `token-integrity`
+- `deps`
+- `validate-real-path`
+- `train-preflight`
+- `deployment-info`
 - `train`
 - `sft`
 - `dpo`
@@ -201,7 +222,13 @@ Primary architectural planes:
 
 - `status`: filesystem-based stage completion visibility
 - `download-status`: download manifest summary and failure hotspots
-- `audit`: compile smoke checks and benchmark-integrity policy assertions
+- `token-manifest`: reconstructs a token artifact manifest from existing local token binaries with explicit reconstructed-provenance caveats
+- `token-integrity`: checks local token artifact sizes, token counts, split pairing, and labeled full-or-sampled hashes without claiming data quality
+- `deps`: checks the installed environment against the declared requirement file
+- `validate-real-path`: runs a tiny real-token train/checkpoint/resume/eval-gate smoke path and writes a JSON report; it does not start pretraining or claim model quality
+- `train-preflight`: no-training readiness checks for declared dependency drift, config geometry, tokenizer loadability, local token cache/manifest presence, checkpoint directory expectations, dtype/device compatibility, and parameter-memory lower-bound reporting
+- `deployment-info`: read-only deployment tier metadata and lower-bound memory estimates; does not validate runtime deployment
+- `audit`: Pass 1 truthfulness checks covering compile, tokenizer smoke, status health, fake-serving detection, and quantization report integrity
 
 ---
 
@@ -225,16 +252,17 @@ Global singleton config objects:
 
 ### 4.2 Key model defaults and derived fields
 
-Important `ModelConfig` defaults:
+Important default `ModelConfig` production profile:
 
-- `dim=1024`, `n_layers=16`, `n_heads=16`, `n_kv_heads=4`
-- `max_seq_len=2048`, `ffn_dim=2816`
-- `use_moe=True`, `n_experts=8`, `n_experts_active=2`, `moe_freq=2`
-- `n_memory_tokens=64`, `n_loops=2`
-- `yarn_scale=4.0`, `sliding_window=512`, `rope_theta=500000.0`
+- `profile_name="edge_0_5b_gqa"`
+- `dim=1536`, `n_layers=18`, `n_heads=16`, `n_kv_heads=4`
+- `max_seq_len=2048`, `ffn_dim=4096`
+- `use_moe=False`, `n_memory_tokens=0`, `n_loops=1`
+- `yarn_scale=1.0`, `sliding_window=512`, `rope_theta=500000.0`
 - `attention_backend="auto"`, `use_flashattention=False`
 - `use_mla=False`, `mla_compression_ratio=0.5`
-- `qk_norm_eps=1e-6`, `use_confidence_head=True`, `confidence_dim=3`
+- `qk_norm_eps=1e-6`, `use_confidence_head=False`, `use_mod_routing=False`
+- Explicit profiles: `edge_0_5b_gqa`, `local_1_5b_gqa`, `workstation_3b_gqa`, `legacy_experimental_439m`
 
 Derived and validated in `__post_init__`:
 
@@ -243,6 +271,30 @@ Derived and validated in `__post_init__`:
 - Backend must be one of `{sdpa, flash2, auto}`
 - MLA ratio must be `0.25` or `0.5`
 - `qk_norm_eps > 0`
+
+### 4.2.1 Deployment tier metadata
+
+`config.py` defines deployment metadata tiers:
+
+- `2gb_edge`
+  - Intended as edge/offload territory, not a claim that 3B/5B GPU inference fits in 2GB VRAM.
+  - Uses `edge_0_5b_gqa` as the nearest in-repo model profile reference.
+  - Assumes small active context and RAG for document workflows.
+- `8gb_laptop`
+  - Uses `edge_0_5b_gqa` as the conservative reference profile.
+  - Larger local models require quantization/offload paths not verified by this repo.
+- `16gb_workstation`
+  - Uses `local_1_5b_gqa` as the reference profile.
+  - `workstation_3b_gqa` is not claimed to fit with useful context without measured memory checks.
+
+Deployment helper truth limits:
+
+- `build_deployment_report(...)` reports lower-bound estimates only.
+- Weight estimates exclude optimizer state, gradients, activations, allocator overhead, framework overhead, and fragmentation.
+- KV-cache estimates exclude allocator/framework overhead and still grow with context in global layers.
+- PyTorch CPU/GPU is the current in-repo reference path.
+- Dynamic-int8 CPU quantization is implemented in `quant_utils.py`; GGUF, GPTQ, AWQ, vLLM, and llama.cpp are external/unverified targets only.
+- A deployment tier is metadata, not validated runtime support, benchmark evidence, or proof of training quality.
 
 ### 4.3 Key pretrain defaults (`TrainConfig`)
 
@@ -261,9 +313,9 @@ Derived and validated in `__post_init__`:
   - `aux_loss_coeff=0.01`, `gate_loss_coeff=0.01`
   - `z_loss_coeff=0.001`, `unc_loss_coeff=0.1`
 - Data quality:
-  - `dedup_ngram_size=13`, `dedup_threshold=0.8`
+  - `dedup_ngram_size=13`, `dedup_threshold=0.8` are retained config fields, not currently wired into runtime deduplication
   - `min_doc_length=50`, `max_doc_length=100000`
-  - `quality_threshold=0.3`
+  - `quality_threshold=0.3` is retained config, not currently enforced by `data.py`
 
 ### 4.4 Override ingress and rollback semantics
 
@@ -316,15 +368,15 @@ Microbatch:
 
 ### Stage C: Core model pass (`model.py`)
 
-1. Token embedding + optional memory-token prepend
+1. Token embedding. Memory-token prepend is legacy-only.
 2. `_run_layers(...)`:
-   - Shallow layers once
-   - Deep layers looped `n_loops` times
+    - Shallow layers once
+   - Deep layers looped `n_loops` times only in the legacy experimental profile
    - Deep train path uses checkpointing (`use_reentrant=False`)
 3. Block internals:
    - `RMSNorm -> GQAttention -> residual`
-   - `RMSNorm -> (MoE or SwiGLU) -> residual`
-   - Optional `MoDRouter` gate on middle layers
+   - `RMSNorm -> SwiGLU -> residual` in production profiles
+   - `MoE` and `MoDRouter` are legacy experimental mechanisms
 4. Head path:
    - `RMSNorm -> tied LM head -> logits`
 5. Training return:
@@ -389,9 +441,9 @@ Else fallback to SDPA (`torch.scaled_dot_product_attention`).
 - Per-dimension correction ramp between `beta_fast` and `beta_slow`
 - Multiplicative scale factor for long-context compensation
 
-### 6.4 MoE details
+### 6.4 Legacy MoE details
 
-`MoE` behavior:
+`MoE` exists only for the explicit `legacy_experimental_439m` profile:
 
 - Router logits in fp32
 - Top-k (`n_experts_active`) dispatch
@@ -405,16 +457,17 @@ Else fallback to SDPA (`torch.scaled_dot_product_attention`).
   - run expert MLP per expert span
   - `scatter_add_` weighted accumulation to token outputs
 
-### 6.5 Recursive layer schedule
+### 6.5 Legacy recursive layer schedule
 
 - `n_shallow = n_layers // 2`
 - Shallow half runs once
-- Deep half runs `loops` times
+- Production profiles use `n_loops=1`
+- Legacy experimental profile can run the deep half multiple times
 - During training, deep layers are wrapped by checkpoint calls to cap activation memory
 
-### 6.6 Confidence head and adaptive refinement
+### 6.6 Legacy confidence head and adaptive refinement
 
-When enabled:
+When enabled by the explicit legacy profile:
 
 - Confidence head predicts 3-channel uncertainty signals.
 - Inference may trigger refinement when average confidence `< adaptive_loop_threshold`.
@@ -434,6 +487,26 @@ When enabled:
 ---
 
 ## 7. Pretrain Runtime and Distributed Behavior (`train.py`)
+
+### 7.0 Training preflight
+
+`python run.py train-preflight` calls `run_training_preflight(...)` and does not start real training.
+
+Implemented checks:
+
+- Model/train config geometry, including `train.seq_len <= model.max_seq_len`
+- Tokenizer artifact presence and loadability
+- Local `.bin` token cache presence
+- Token artifact manifest loadability and existing-artifact reporting
+- Checkpoint directory state or parent-path expectation
+- AMP dtype/device compatibility
+- Dense production parameter-memory lower bound
+
+Truth limits:
+
+- A passed preflight does not prove benchmark quality, convergence, data quality, throughput, distributed correctness, or production safety.
+- Memory reporting is a parameter lower bound only; optimizer state, gradients, activations, compile overhead, dataloader memory, and fragmentation are not included.
+- Missing local token artifacts fail readiness because streaming dataset access is not verified by this preflight.
 
 ### 7.1 Startup sequence
 
@@ -468,6 +541,7 @@ When enabled:
 - Detects CUDA OOM via exception text.
 - Skips microbatch and clears cache.
 - Fails hard after >3 consecutive OOMs (`Fatal OOM loop detected`).
+- Non-finite loss aborts training with `FloatingPointError`; it is not skipped as a recoverable batch.
 
 ### 7.5 Early stopping behavior
 
@@ -526,14 +600,19 @@ Data sources include web, wiki, math, code, and instruction corpora. Current sou
 
 Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_sources` and optional downloader skip envs.
 
-### 8.2 Data quality filter
+### 8.2 Implemented data filtering and truth limits
 
-`DataQualityFilter` applies:
+There is no implemented `DataQualityFilter` in the current runtime path.
+The current data behavior is narrower:
 
-1. N-gram fingerprint deduplication
-2. Optional heuristic English check
-3. Heuristic quality score thresholding
-4. Length bounds and repetition penalties
+1. Source-level exclusion via `train_cfg.excluded_benchmark_sources`
+2. Optional downloader source skipping through environment variables
+3. Text extraction with fallback fields
+4. Empty/very short extracted text skipped by extractor checks
+5. EOS append and token-cache materialization
+
+Current code does not implement MinHash, near-duplicate detection, PII removal,
+license classification, or content-level benchmark contamination detection.
 
 ### 8.3 Mixed dataset runtime phases
 
@@ -545,7 +624,7 @@ Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_s
 - Streaming phase:
   - Grouped source loading (`max_open_sources`)
   - Weighted inter-source sampling
-  - Text extraction, quality filtering, tokenization, EOS append
+  - Text extraction, tokenization, EOS append
 
 ### 8.4 Validation dataset behavior
 
@@ -572,6 +651,13 @@ Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_s
 - Stream retry/load retry loops
 - Disk-cap cutoff (`MAX_DISK_GB`)
 - Manifest run history in `data_cache/download_manifest.json`
+- Token artifact metadata in `data_cache/token_artifacts_manifest.json`
+  - source/subset IDs
+  - dataset split and artifact split
+  - path existence
+  - dtype/itemsize
+  - size bytes and token counts
+  - config hash for the downloader source plan
 
 ---
 
@@ -592,6 +678,8 @@ Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_s
 - Regex-based splitting when `regex` package is available
 - Longest-match trie for code/math domain path
 - Chat templating and chat encode helpers
+- Minimal audit helper reports vocab size, merge count, special-token integrity,
+  round-trip smoke checks, and chars/token on caller-provided samples
 
 ### 9.3 SFT (`sft_trainer.py`)
 
@@ -619,15 +707,16 @@ Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_s
 
 ### 9.6 Infinite improver (`infinite_improver.py`)
 
-- Identifies uncertain prompts using confidence head
+- Confidence-head based uncertainty is legacy-profile only; production-profile compatibility is unverified in this pass
 - Generates diverse candidates with varied sampling temperatures
-- Scores candidates by model self-likelihood, confidence, and heuristics
+- Scores candidates by model self-likelihood, confidence where available, and heuristics
 - Builds synthetic preference pairs
 - Mixes anchor pairs from DPO data to reduce drift
 - Runs iteration DPO and quality-gates by uncertainty regression
 
 ### 9.7 Evaluation suite (`eval_suite.py`)
 
+- Requires a loadable checkpoint before writing an eval report; missing or unloadable checkpoints raise `EvalIntegrityError`
 - Perplexity
 - Multiple-choice QA
 - GSM8K math
@@ -635,32 +724,45 @@ Source activation excludes any dataset listed in `train_cfg.excluded_benchmark_s
 - Consistency/self-contradiction proxy
 - Confidence calibration (ECE)
 - Operational stats and 18-metric scorecard output
+- Report metadata includes checkpoint load status, checkpoint sidecar hash presence, model config hash, per-benchmark run modes, sample counts, and warnings
+- Toy/fallback/smoke samples are labeled as smoke-only and are not real benchmark evidence
 
 ### 9.8 Eval harness (`eval_harness/*`)
 
 - Wraps eval suite with run manifest
-- Computes benchmark protection coverage from excluded-source overlap
+- Computes benchmark exclusion coverage from excluded-source overlap
+- Does not implement content contamination detection
+- Carries eval run mode, real-benchmark-evidence flag, and eval warnings into manifest outputs
 - Emits compact phase marker (`phase_eval_harness.json`)
 
 ### 9.9 Benchmark harness (`eval/benchmark_harness.py`)
 
 - Builds 18-metric report-card JSON
-- Builds 1x/10x/100x comparison table
-- Emits CSV and Markdown summaries
+- External 1x/10x/100x scale-band comparison is disabled as unverified; the repo has no measured baseline evidence for those target bands
+- Emits CSV and Markdown summaries with explicit disabled/unverified comparison warnings
 
 ### 9.10 Quantization (`quant_utils.py`)
 
 - CPU dynamic int8 quantization of linear layers
-- Optional TorchScript trace export
-- Writes quant report JSON
-- ONNX export flag exists in config but no ONNX export path is implemented
+- Optional TorchScript trace export; a requested TorchScript export failure raises `QuantizationExportError`
+- Writes quant report JSON only through report validation
+- ONNX export flag exists in config, but requesting it fails explicitly because no ONNX export path is implemented
+- GGUF, GPTQ, AWQ, vLLM, and llama.cpp export/runtime paths are not implemented or verified in this repo
 
 ### 9.11 Serving (`serving/server.py`)
 
-- Minimal request handler
+- Minimal fail-closed request handler
 - Prompt-attack detection gate
 - Output sanitization pass
-- Placeholder echo response for integration scaffolding
+- No default model backend and no echo response path
+
+### 9.12 Local deployment honesty
+
+- Current deployable reference path is PyTorch CPU/GPU execution using in-repo model code and checkpoints.
+- `python run.py deployment-info` prints deployment tier metadata and lower-bound memory estimates.
+- 2GB VRAM is explicitly treated as edge/offload territory.
+- Long context materially increases KV-cache memory; local/sliding layers are bounded, but global layers keep full-context KV.
+- Deployment readiness is not benchmark quality, training success, or production serving readiness.
 
 ---
 
@@ -853,15 +955,15 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `run.py`
   - Entry command router, dependency gate, runtime config snapshots, full-pipeline orchestrator
 - `config.py`
-  - Dataclass runtime state, override application, rollback on validation failure
+  - Dataclass runtime state, deployment tier metadata/helpers, override application, rollback on validation failure
 - `model.py`
-  - Core model graph: RMSNorm, YaRN, GQAttention, MoE, recursive layer runner, generation
+  - Core model graph: RMSNorm, YaRN/RoPE cache, GQAttention, dense SwiGLU production path, legacy experimental modules, generation
 - `train.py`
   - Pretrain loop, DDP/AMP integration, token-aware scheduler, telemetry, early stop, checkpointing
 - `data.py`
-  - Mixed source dataset, quality filter, validation dataset, prefetch wrapper
+  - Mixed source dataset, validation dataset, prefetch wrapper
 - `download_data.py`
-  - Source downloader, budget allocation, resume and manifest tracking
+  - Source downloader, budget allocation, resume, run manifest, token-artifact manifest tracking
 - `tokenizer.py`
   - Runtime BPE tokenizer with code/math path and chat helpers
 - `train_tokenizer.py`
@@ -875,7 +977,7 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `infinite_improver.py`
   - Uncertainty-guided self-improvement loop with quality-gated iteration rollback
 - `eval_suite.py`
-  - Multi-benchmark evaluation and scorecard generation
+  - Multi-benchmark evaluation, checkpoint-gated report generation, run-mode metadata, and scorecard generation
 - `quant_utils.py`
   - Dynamic int8 quantization + optional TorchScript export
 - `hardware_profiles.py`
@@ -902,9 +1004,9 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 
 ### 15.4 Eval and harness packages
 
-- `eval/benchmark_harness.py`: report-card and scale-comparison outputs
-- `eval_harness/runner.py`: eval wrapper + contamination coverage manifest
-- `eval_harness/contamination_checks.py`: overlap-based contamination proxy
+- `eval/benchmark_harness.py`: report-card outputs and disabled external-comparison warning artifacts
+- `eval_harness/runner.py`: eval wrapper + benchmark exclusion coverage manifest
+- `eval_harness/contamination_checks.py`: source-exclusion coverage helper; not content contamination detection
 - `eval_harness/manifests.py`: manifest lifecycle helpers
 - `eval_harness/statistical_tests.py`: lightweight mean/std/bootstrap CI
 
@@ -918,7 +1020,7 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `security/validator.py`: path/data validation and gated code execution
 - `safety/prompt_attack_checks.py`: prompt-level attack pattern checks
 - `safety/policy_filters.py`: output sanitization and policy check
-- `serving/server.py`: minimal serving stub integrating safety checks
+- `serving/server.py`: fail-closed serving boundary integrating safety checks
 
 ### 15.6 Tests
 
@@ -943,8 +1045,9 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 
 Behavior currently present in code and important for future changes:
 
-- In `model.GQAttention`, local mask is only built when `T > 1`; decode single-token path does not apply local window mask.
-- In `model.MoE`, `aux_loss` and `load_balance_loss` are currently the same scalar term.
+- In `model.GQAttention`, local/sliding KV cache is bounded to `sliding_window` entries for local layers; global layers still keep full KV.
+- Deployment tier estimates are lower bounds only and do not validate GGUF/GPTQ/AWQ/vLLM/llama.cpp support.
+- In `model.MoE`, `aux_loss` and `load_balance_loss` are currently the same scalar term in the legacy experimental profile.
 - In `core.ops.run_attention`, flash attention exceptions are caught and fallback to SDPA without explicit error surfacing.
 - `TrainConfig.dtype` defaults to `bfloat16` while T4 profile prefers `float16`; AMP autocast eligibility does not explicitly gate bf16 by GPU capability.
 - CPU profile requests `attention_backend: eager`, but runtime resolver normalizes unknown values to `sdpa`.

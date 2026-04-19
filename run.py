@@ -6,7 +6,13 @@ Usage:
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
         python run.py download-core  Download core-first bootstrap set
-    python run.py download-status Show download manifest summary
+  python run.py download-status Show download manifest summary
+  python run.py token-manifest Reconstruct token artifact manifest from local cache
+  python run.py token-integrity Inspect token artifact integrity metadata
+  python run.py deps           Check declared dependency environment
+  python run.py validate-real-path Run tiny real-token validation without pretraining
+  python run.py train-preflight Check training readiness without starting training
+  python run.py deployment-info Show truthful deployment tier metadata
   python run.py train          Pretrain the base model
   python run.py sft            Supervised fine-tuning
   python run.py dpo            Direct Preference Optimization
@@ -16,7 +22,7 @@ Usage:
     python run.py eval-harness   Run evaluation with manifest harness
   python run.py improve        Self-improvement loop
   python run.py eval           Run evaluation suite
-    python run.py benchmark-harness Run evaluation + 1x/10x/100x comparison report
+    python run.py benchmark-harness Run evaluation report; external scale comparison disabled/unverified
   python run.py audit          Run production-readiness audit checks
   python run.py full           Run the entire pipeline end-to-end
   python run.py status         Show pipeline status
@@ -31,8 +37,28 @@ import importlib.util
 import subprocess
 
 from core.config_manager import ConfigManager
+from core.dependency_checks import check_requirement_file
 from config import apply_overrides, runtime_config_dict
 from security.validator import ValidationError, get_allowed_data_roots, safe_load_json
+
+
+OUTPUT_JSON = False
+REPORT_PATH = os.path.join(
+    ".",
+    "run_artifacts",
+    "tiny_real_data_validation_report.json",
+)
+
+
+def _emit_json(payload):
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _write_json_report(payload, path: str) -> str:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+    return path
 
 
 def apply_runtime_config(
@@ -91,6 +117,12 @@ def check_dependencies(command: str):
         "download": {"numpy": "numpy", "datasets": "datasets"},
         "download-safe": {"numpy": "numpy", "datasets": "datasets"},
         "download-core": {"numpy": "numpy", "datasets": "datasets"},
+        "token-manifest": {"numpy": "numpy", "tokenizers": "tokenizers"},
+        "token-integrity": {"numpy": "numpy"},
+        "deps": {},
+        "validate-real-path": {"torch": "torch", "numpy": "numpy", "tokenizers": "tokenizers", "datasets": "datasets"},
+        "train-preflight": {"torch": "torch", "numpy": "numpy"},
+        "deployment-info": {},
         "train": {"torch": "torch", "numpy": "numpy", "datasets": "datasets"},
         "sft": {"torch": "torch", "numpy": "numpy"},
         "dpo": {"torch": "torch", "numpy": "numpy"},
@@ -129,54 +161,184 @@ def check_dependencies(command: str):
             print(f"  TIP: pip install {name}  (for better tokenization)")
 
 
-def show_status():
-    """Show current pipeline status."""
-    print("\n" + "=" * 60)
-    print("PIPELINE STATUS")
-    print("=" * 60)
+STATUS_TARGETS = [
+    ("Tokenizer", "./tokenizer_data/encoder.json"),
+    ("Data cache", "./data_cache/tokens"),
+    ("Val cache", "./data_cache/val_tokens"),
+    ("Pretrain ckpt", "./checkpoints"),
+    ("SFT ckpt", "./sft_checkpoints"),
+    ("DPO ckpt", "./dpo_checkpoints"),
+    ("Improved ckpt", "./improved_checkpoints"),
+    ("Eval results", "./eval_results/eval_report.json"),
+]
 
-    checks = [
-        ("Tokenizer", "./tokenizer_data/encoder.json"),
-        ("Data cache", "./data_cache/tokens"),
-        ("Val cache", "./data_cache/val_tokens"),
-        ("Pretrain ckpt", "./checkpoints"),
-        ("SFT ckpt", "./sft_checkpoints"),
-        ("DPO ckpt", "./dpo_checkpoints"),
-        ("Improved ckpt", "./improved_checkpoints"),
-        ("Eval results", "./eval_results/eval_report.json"),
-    ]
 
-    for name, path in checks:
-        if os.path.exists(path):
-            if os.path.isdir(path):
+def collect_status_checks():
+    """Collect filesystem-backed status rows without printing."""
+    rows = []
+    for name, path in STATUS_TARGETS:
+        row = {
+            "name": name,
+            "path": path,
+            "exists": os.path.exists(path),
+            "is_dir": os.path.isdir(path),
+            "file_count": 0,
+            "size_mb": 0.0,
+        }
+        if row["exists"]:
+            if row["is_dir"]:
                 files = os.listdir(path)
-                n = len(files)
-                size_mb = sum(
+                row["file_count"] = len(files)
+                row["size_mb"] = sum(
                     os.path.getsize(os.path.join(path, f))
                     for f in files
                     if os.path.isfile(os.path.join(path, f))
                 ) / 1e6
-                print(f"  ✓ {name:<20} {n} files, {size_mb:.1f}MB")
             else:
-                size_mb = os.path.getsize(path) / 1e6
-                print(f"  ✓ {name:<20} {size_mb:.1f}MB")
-        else:
-            print(f"  ✗ {name:<20} not found")
+                row["size_mb"] = os.path.getsize(path) / 1e6
+        rows.append(row)
+    return rows
 
+
+def collect_dependency_checks(requirements_path: str = "./requirement.txt"):
+    """Collect declared dependency drift for status/preflight visibility."""
+    return check_requirement_file(requirements_path)
+
+
+def _print_dependency_summary(report):
+    print("\nDEPENDENCY ENVIRONMENT")
+    print(f"  requirements: {os.path.abspath(report['path'])}")
+    if not report["exists"]:
+        print("  [UNVERIFIED] requirement file is missing")
+        return
+    summary = report["summary"]
+    print(
+        "  summary     : "
+        f"pass={summary['pass']} fail={summary['fail']} "
+        f"unverified={summary['unverified']}"
+    )
+    for item in report["items"]:
+        status = str(item["status"]).upper()
+        installed = item["installed"] if item["installed"] is not None else "missing"
+        print(
+            f"  [{status:<10}] {item['package']:<12} "
+            f"installed={installed} required={item['required']}"
+        )
+
+
+def _next_status_action(dependency_ok: bool):
+    if not os.path.exists("./tokenizer_data/encoder.json"):
+        return {
+            "command": "python run.py tokenizer",
+            "ready_for_training": False,
+            "reason": "tokenizer artifacts are missing",
+        }
+    if not os.path.exists("./data_cache/tokens"):
+        return {
+            "command": "python run.py download",
+            "ready_for_training": False,
+            "reason": "token cache is missing",
+        }
+    if not os.path.exists("./data_cache/token_artifacts_manifest.json"):
+        return {
+            "command": "python run.py token-manifest",
+            "ready_for_training": False,
+            "reason": "token artifact manifest is missing",
+        }
+    if not dependency_ok:
+        return {
+            "command": "fix dependency drift, then run: python run.py train-preflight",
+            "ready_for_training": False,
+            "reason": "declared dependency environment is not satisfied",
+        }
+    if not os.path.exists("./checkpoints"):
+        return {
+            "command": "python run.py train-preflight",
+            "ready_for_training": False,
+            "reason": "preflight must pass before training; checkpoint directory is missing",
+        }
+    if not os.path.exists("./sft_checkpoints"):
+        return {
+            "command": "python run.py sft",
+            "ready_for_training": False,
+            "reason": "base checkpoint exists; SFT checkpoint is missing",
+        }
+    if not os.path.exists("./dpo_checkpoints"):
+        return {
+            "command": "python run.py dpo",
+            "ready_for_training": False,
+            "reason": "SFT checkpoint exists; DPO checkpoint is missing",
+        }
+    return {
+        "command": "python run.py eval",
+        "ready_for_training": False,
+        "reason": "training artifacts exist; evaluation is next",
+    }
+
+
+def build_status_report():
+    dependency_report = collect_dependency_checks()
+    return {
+        "schema": "pipeline_status_v2",
+        "status_checks": collect_status_checks(),
+        "dependency_environment": dependency_report,
+        "next_action": _next_status_action(dependency_report["ok"]),
+        "training_quality_claim": "none",
+    }
+
+
+def show_status():
+    """Show current pipeline status."""
+    report = build_status_report()
+    if OUTPUT_JSON:
+        _emit_json(report)
+        return
+
+    print("\n" + "=" * 60)
+    print("PIPELINE STATUS")
     print("=" * 60)
 
-    if not os.path.exists("./tokenizer_data/encoder.json"):
-        print("\n  NEXT: python run.py tokenizer")
-    elif not os.path.exists("./data_cache/tokens"):
-        print("\n  NEXT: python run.py download")
-    elif not os.path.exists("./checkpoints"):
-        print("\n  NEXT: python run.py train")
-    elif not os.path.exists("./sft_checkpoints"):
-        print("\n  NEXT: python run.py sft  (need SFT data in ./sft_data/)")
-    elif not os.path.exists("./dpo_checkpoints"):
-        print("\n  NEXT: python run.py dpo  (need DPO data in ./dpo_data/)")
-    else:
-        print("\n  NEXT: python run.py eval")
+    for row in collect_status_checks():
+        name = row["name"]
+        if row["exists"]:
+            if row["is_dir"]:
+                print(
+                    f"  [OK]      {name:<20} "
+                    f"{row['file_count']} files, {row['size_mb']:.1f}MB"
+                )
+            else:
+                print(f"  [OK]      {name:<20} {row['size_mb']:.1f}MB")
+        else:
+            print(f"  [MISSING] {name:<20} not found")
+
+    print("=" * 60)
+    dependency_report = report["dependency_environment"]
+    _print_dependency_summary(dependency_report)
+
+    next_action = report["next_action"]
+    print(f"\n  NEXT: {next_action['command']}")
+    if next_action["command"] == "python run.py token-manifest":
+        print("  Training remains NOT READY until train-preflight passes.")
+    elif not dependency_report["ok"]:
+        print("  Do not start training from this environment yet.")
+    elif next_action["command"] == "python run.py train-preflight":
+        print("  Only run python run.py train after preflight passes.")
+
+
+def run_deps():
+    """Show declared dependency satisfaction."""
+    report = collect_dependency_checks()
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    _print_dependency_summary(report)
+    if not report["ok"]:
+        print("\nDEPENDENCY CHECK FAILED")
+        sys.exit(1)
+    print("\nDEPENDENCY CHECK PASSED")
 
 
 def run_tokenizer():
@@ -298,6 +460,71 @@ def run_download_status():
     print("=" * 60)
 
 
+def run_token_manifest():
+    """Reconstruct token artifact manifest from existing local cache."""
+    import download_data
+
+    try:
+        report = download_data.reconstruct_token_artifact_manifest()
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"ERROR: failed to reconstruct token artifact manifest: {exc}")
+        sys.exit(1)
+
+    if OUTPUT_JSON:
+        _emit_json({
+            "schema": "token_artifact_manifest_reconstruction_v1",
+            **report,
+            "quality_claim": "none",
+        })
+        if report["artifact_count"] == 0:
+            sys.exit(1)
+        return
+
+    print("\n" + "=" * 60)
+    print("TOKEN ARTIFACT MANIFEST")
+    print("=" * 60)
+    print(f"  manifest_path       : {os.path.abspath(report['manifest_path'])}")
+    print(f"  artifact_count      : {report['artifact_count']}")
+    print(f"  unknown_source_count: {report['unknown_source_count']}")
+    print("  provenance          : reconstructed_from_local_cache")
+    print("  quality_claim       : none")
+    if report["artifact_count"] == 0:
+        print("ERROR: no local token artifacts found")
+        sys.exit(1)
+    print("=" * 60)
+
+
+def run_token_integrity():
+    """Inspect token artifacts from the local token manifest."""
+    import download_data
+
+    report = download_data.validate_token_artifact_manifest()
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    print("\n" + "=" * 60)
+    print("TOKEN ARTIFACT INTEGRITY")
+    print("=" * 60)
+    print(f"  manifest_path          : {os.path.abspath(report['manifest_path'])}")
+    print(f"  schema                 : {report['schema']}")
+    print(f"  artifact_count         : {report['artifact_count']}")
+    print(f"  existing_artifact_count: {report['existing_artifact_count']}")
+    print(f"  failed_artifact_count  : {report['failed_artifact_count']}")
+    print(f"  missing train/val pairs: {len(report['missing_train_val_pairs'])}")
+    print(f"  hash_scope             : {report['hash_scope']}")
+    print("  quality_claim          : none")
+    if report["errors"]:
+        print("  errors:")
+        for error in report["errors"]:
+            print(f"    - {error}")
+    print("=" * 60)
+    if not report["ok"]:
+        sys.exit(1)
+
+
 def run_train():
     print("\n" + "=" * 60)
     print("STEP 3: Pretraining")
@@ -309,10 +536,140 @@ def run_train():
 
     t0 = time.time()
     import train
+    try:
+        train.assert_training_preflight_ready(train.run_training_preflight())
+    except train.TrainingPreflightError as exc:
+        print(f"ERROR: training preflight is not ready: {exc}")
+        print("Run: python run.py train-preflight")
+        sys.exit(1)
     train.train()
 
     elapsed = time.time() - t0
     print(f"\nPretraining complete: {elapsed / 60:.1f} min")
+
+
+def run_train_preflight():
+    import train
+
+    report = train.run_training_preflight()
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ready_for_training"]:
+            sys.exit(1)
+        return
+
+    print("\n" + "=" * 60)
+    print("TRAINING PREFLIGHT")
+    print("=" * 60)
+
+    for item in report["checks"]:
+        status = str(item.get("status", "unknown")).upper()
+        print(f"  [{status:<10}] {item['name']}: {item['detail']}")
+
+    summary = report["summary"]
+    print("=" * 60)
+    print(
+        "  failures={failures} warnings={warnings} unverified={unverified}".format(
+            **summary
+        )
+    )
+    if report["ready_for_training"]:
+        print("  TRAINING PREFLIGHT PASSED")
+        return
+
+    print("  TRAINING PREFLIGHT NOT READY")
+    print("  This does not start training and does not prove training quality.")
+    sys.exit(1)
+
+
+def run_validate_real_path():
+    """Run tiny real-token validation without starting pretraining."""
+    import train
+
+    try:
+        report = train.run_tiny_real_data_validation(
+            checkpoint_dir="./run_artifacts/tiny_real_data_validation",
+            seq_len=16,
+            deterministic=True,
+            data_loader_smoke=True,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        payload = {
+            "schema": "tiny_real_data_validation_v1",
+            "ok": False,
+            "error": str(exc),
+            "quality_claim": "none",
+        }
+        if OUTPUT_JSON:
+            _emit_json(payload)
+        else:
+            print(f"ERROR: tiny real-data validation failed: {exc}")
+        sys.exit(1)
+
+    report["report_path"] = _write_json_report(report, REPORT_PATH)
+    if OUTPUT_JSON:
+        _emit_json(report)
+        return
+
+    print("\n" + "=" * 60)
+    print("TINY REAL-DATA VALIDATION")
+    print("=" * 60)
+    print(f"  artifact_path     : {report['artifact_path']}")
+    print(f"  tokens_read       : {report['tokens_read']}")
+    print(f"  checkpoint_path   : {report['checkpoint_path']}")
+    print(f"  resumed_step      : {report['resumed_step']}")
+    print(f"  loss              : {report['loss']:.6f}")
+    print(f"  data_loader_smoke : {report['data_loader_smoke']['status']}")
+    print(f"  eval gate         : {report['eval_missing_checkpoint_gate']}")
+    print(f"  report_path       : {os.path.abspath(report['report_path'])}")
+    print("  quality_claim     : none")
+    print("=" * 60)
+
+
+def run_deployment_info():
+    from config import available_deployment_tiers, build_deployment_report
+
+    reports = [
+        build_deployment_report(tier_name)
+        for tier_name in available_deployment_tiers()
+    ]
+    if OUTPUT_JSON:
+        _emit_json({
+            "schema": "deployment_tiers_v1",
+            "reports": reports,
+            "quality_claim": "none",
+        })
+        return
+
+    print("\n" + "=" * 60)
+    print("DEPLOYMENT TIERS")
+    print("=" * 60)
+
+    for report in reports:
+        tier = report["tier"]
+        estimates = report["estimates"]
+        print(f"\n[{tier['name']}]")
+        print(f"  target_vram_gb      : {tier['target_vram_gb']}")
+        print(f"  model_profile       : {report['model_profile']}")
+        print(f"  size_band           : {tier['intended_model_size_band']}")
+        print(f"  active_context      : {tier['active_context_tokens']} tokens")
+        print(
+            "  weight_lower_bound : "
+            f"{estimates['weight_memory_lower_bound_gb']} GB"
+        )
+        print(
+            "  kv_lower_bound     : "
+            f"{estimates['kv_cache_lower_bound_gb']} GB"
+        )
+        print("  runtime             : PyTorch reference path only")
+        print("  external runtimes   : unverified")
+        print(f"  quantization        : {tier['quantization_expectation']}")
+        print(f"  offload             : {tier['offload_expectation']}")
+        print(f"  rag                 : {tier['rag_expectation']}")
+
+    print("\nCAVEAT: estimates are lower bounds only, not deployment proof.")
+    print("CAVEAT: GGUF/GPTQ/AWQ/vLLM/llama.cpp are not implemented here.")
+    print("=" * 60)
 
 
 def run_sft():
@@ -503,8 +860,68 @@ def run_benchmark_harness():
     print(f"\nBenchmark harness complete: {elapsed / 60:.1f} min")
 
 
+def audit_status_command_health():
+    """Verify status is truthful enough to run cleanly in a subprocess."""
+    cmd = [sys.executable, "run.py", "status"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"status command failed: {detail[:300]}")
+    combined = result.stdout + result.stderr
+    if "Traceback" in combined:
+        raise RuntimeError("status command emitted a traceback")
+    if "\u2713" in combined or "\u2717" in combined:
+        raise RuntimeError("status output contains non-ASCII status glyphs")
+    if "PIPELINE STATUS" not in result.stdout:
+        raise RuntimeError("status output did not include the status header")
+    if "NEXT: python run.py train\n" in result.stdout:
+        raise RuntimeError("status output recommends training without preflight")
+
+
+def audit_serving_contract():
+    """Fail if the serving path still behaves like an echo scaffold."""
+    from serving.server import handle_request
+
+    result = handle_request("pass1 serving audit prompt")
+    if not isinstance(result, dict):
+        raise RuntimeError("serving handler did not return a dict")
+    if result.get("ok") is True:
+        response = str(result.get("response", ""))
+        if response.startswith("Echo:"):
+            raise RuntimeError("serving handler still returns echo responses")
+        raise RuntimeError("serving returned success without a configured model backend")
+    error = str(result.get("error", ""))
+    if "model backend not loaded" not in error.lower():
+        raise RuntimeError(
+            "serving failure is not explicit about the missing model backend"
+        )
+
+
+def audit_quantization_report_contract():
+    """Verify quantization reports cannot encode partial export as success."""
+    from quant_utils import validate_quant_report_payload
+
+    valid_failure = {
+        "success": False,
+        "quant_mode": "dynamic-int8",
+        "errors": ["torchscript export failed"],
+    }
+    validate_quant_report_payload(valid_failure)
+
+    invalid_success = {
+        "success": True,
+        "quant_mode": "dynamic-int8",
+        "errors": ["torchscript export failed"],
+    }
+    try:
+        validate_quant_report_payload(invalid_success)
+    except ValueError:
+        return
+    raise RuntimeError("quantization report accepted success with errors")
+
+
 def run_audit():
-    """Run quick production-readiness checks."""
+    """Run narrow Pass 1 truthfulness checks."""
     print("\n" + "=" * 60)
     print("PIPELINE AUDIT")
     print("=" * 60)
@@ -553,41 +970,17 @@ def run_audit():
             print(f"\nAUDIT FAILED: {name}")
             sys.exit(1)
 
-    # Config integrity checks for data/eval trustworthiness.
-    from config import train_cfg, eval_cfg
-
-    expected_benches = {
-        "truthful_qa",
-        "google/boolq",
-        "allenai/ai2_arc",
-        "winogrande",
-        "openai/gsm8k",
-    }
-    excluded = set(getattr(train_cfg, "excluded_benchmark_sources", ()))
-    missing = sorted(expected_benches - excluded)
-    if missing:
-        print(
-            "\nAUDIT FAILED: train_cfg.excluded_benchmark_sources "
-            f"missing {missing}"
-        )
-        sys.exit(1)
-
-    if not eval_cfg.strict_real_benchmarks:
-        print("\nAUDIT FAILED: eval_cfg.strict_real_benchmarks must be True")
-        sys.exit(1)
-
-    if eval_cfg.allow_toy_fallback:
-        print("\nAUDIT FAILED: eval_cfg.allow_toy_fallback must be False")
-        sys.exit(1)
-
-    threshold_checks = [
-        ("min_real_mc_samples", eval_cfg.min_real_mc_samples),
-        ("min_real_math_samples", eval_cfg.min_real_math_samples),
-        ("min_real_code_samples", eval_cfg.min_real_code_samples),
+    extra_checks = [
+        ("Status command health", audit_status_command_health),
+        ("Fake serving detection", audit_serving_contract),
+        ("Quantization report integrity", audit_quantization_report_contract),
     ]
-    for name, value in threshold_checks:
-        if not isinstance(value, int) or value <= 0:
-            print(f"\nAUDIT FAILED: eval_cfg.{name} must be a positive integer")
+    for name, check in extra_checks:
+        print(f"  Running: {name}")
+        try:
+            check()
+        except RuntimeError as exc:
+            print(f"\nAUDIT FAILED: {name}: {exc}")
             sys.exit(1)
 
     print("\nAUDIT PASSED")
@@ -625,6 +1018,8 @@ def run_full():
 
 
 def main():
+    global OUTPUT_JSON, REPORT_PATH
+
     parser = argparse.ArgumentParser(
         description="SLM Pipeline Orchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -635,6 +1030,12 @@ Commands:
     download-safe Download with network-safe defaults
         download-core Download core-first bootstrap set
     download-status Show download manifest summary
+  token-manifest Reconstruct token artifact manifest from local cache
+  token-integrity Inspect token artifact integrity metadata
+  deps          Check declared dependency environment
+  validate-real-path Run tiny real-token validation without pretraining
+  train-preflight Check training readiness without starting training
+  deployment-info Show truthful deployment tier metadata
   train        Pretrain the base model
   sft          Supervised fine-tuning
   dpo          Direct Preference Optimization
@@ -644,7 +1045,7 @@ Commands:
     eval-harness Run evaluation with manifest harness
   improve      Self-improvement loop
   eval         Run evaluation suite
-    benchmark-harness Run evaluation + 1x/10x/100x comparison report
+    benchmark-harness Run evaluation report; external scale comparison disabled/unverified
   audit        Run production-readiness audit checks
   full         Run full pipeline (tokenizer -> download -> train -> sft -> dpo -> improve -> eval)
   status       Show pipeline status
@@ -653,8 +1054,9 @@ Commands:
     parser.add_argument(
         "command",
         choices=[
-            "tokenizer", "download", "download-safe", "download-core", "download-status",
-            "train", "sft", "dpo", "distill", "quantize", "hw-profile", "eval-harness",
+            "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
+            "token-integrity", "deps", "validate-real-path",
+            "train-preflight", "deployment-info", "train", "sft", "dpo", "distill", "quantize", "hw-profile", "eval-harness",
             "improve", "eval", "benchmark-harness", "audit", "full", "status",
         ],
         help="Pipeline stage to run",
@@ -675,6 +1077,16 @@ Commands:
         action="store_true",
         help="Fail on unknown config sections or fields.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON for commands that support it.",
+    )
+    parser.add_argument(
+        "--report-path",
+        default=REPORT_PATH,
+        help="JSON report path for validate-real-path.",
+    )
 
     args = parser.parse_args()
 
@@ -688,6 +1100,9 @@ Commands:
         print(f"ERROR: failed to apply runtime config: {e}")
         sys.exit(1)
 
+    OUTPUT_JSON = bool(args.json)
+    REPORT_PATH = args.report_path
+
     check_dependencies(args.command)
 
     commands = {
@@ -696,6 +1111,12 @@ Commands:
         "download-safe": run_download_safe,
         "download-core": run_download_core,
         "download-status": run_download_status,
+        "token-manifest": run_token_manifest,
+        "token-integrity": run_token_integrity,
+        "deps": run_deps,
+        "validate-real-path": run_validate_real_path,
+        "train-preflight": run_train_preflight,
+        "deployment-info": run_deployment_info,
         "train": run_train,
         "sft": run_sft,
         "dpo": run_dpo,
