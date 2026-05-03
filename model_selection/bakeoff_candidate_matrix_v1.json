@@ -1,0 +1,72 @@
+{
+  "schema": "bakeoff_candidate_matrix_v1",
+  "version": "v1",
+  "selection_state": "no_candidate_selected",
+  "dense_only_required": true,
+  "moe_allowed": false,
+  "candidate_slot_count": 3,
+  "candidate_slots": [
+    {
+      "slot_id": "current_custom_base",
+      "candidate_id": "repo_custom_base_family",
+      "candidate_type": "current_custom_base",
+      "source_family": "repo_custom_base",
+      "size_class": "repo_profiles_up_to_3b_reference_with_legacy_439m_experimental_profile",
+      "dense_or_moe": "dense_only_for_bakeoff",
+      "open_weight_status": "repo_local_only",
+      "linux_runtime_fit": "unknown_until_real_checkpoint_present",
+      "vllm_likelihood": "unknown_until_real_checkpoint_present",
+      "qlora_feasibility_48gb": "uncertain_until_real_checkpoint_present",
+      "license_deployment_notes": "Repo-owned/custom path assumed only if a real usable checkpoint exists. Runtime fit remains unverified until checkpoint-backed execution exists.",
+      "current_status": "requires_real_checkpoint",
+      "custom_base_qualification_status": "requires_real_checkpoint",
+      "disqualifier_flags": [
+        "no_usable_checkpoint_evidenced_in_standard_checkpoint_surface"
+      ],
+      "notes": "Not a full contender yet. The current repo status surface does not show usable pretrain, SFT, DPO, or improved checkpoints."
+    },
+    {
+      "slot_id": "open_dense_7b_slot",
+      "candidate_id": "proposed_open_dense_7b_slot",
+      "candidate_type": "open_dense_candidate_slot",
+      "source_family": "open_dense_unselected",
+      "size_class": "7b_class",
+      "dense_or_moe": "dense",
+      "open_weight_status": "required_yes_pending_named_candidate",
+      "linux_runtime_fit": "must_be_realistic_for_linux_first_48gb_workstation",
+      "vllm_likelihood": "must_be_likely_or_better",
+      "qlora_feasibility_48gb": "must_be_likely_single_gpu_or_better",
+      "license_deployment_notes": "Candidate must have deployment terms compatible with the intended repo path. Package does not pre-approve any named model.",
+      "current_status": "proposed_not_selected_pending_execution",
+      "custom_base_qualification_status": "not_applicable",
+      "disqualifier_flags": [],
+      "notes": "Named 7B candidate intentionally deferred until bakeoff execution planning. Public prestige is not sufficient."
+    },
+    {
+      "slot_id": "open_dense_14b_slot",
+      "candidate_id": "proposed_open_dense_14b_slot",
+      "candidate_type": "open_dense_candidate_slot",
+      "source_family": "open_dense_unselected",
+      "size_class": "14b_class",
+      "dense_or_moe": "dense",
+      "open_weight_status": "required_yes_pending_named_candidate",
+      "linux_runtime_fit": "must_be_realistic_for_linux_first_48gb_workstation",
+      "vllm_likelihood": "must_be_likely_or_better",
+      "qlora_feasibility_48gb": "must_be_feasible_but_may_require_tighter_runtime_budget",
+      "license_deployment_notes": "Candidate must justify its operational cost with meaningful hidden-eval lift. Package does not pre-approve any named model.",
+      "current_status": "proposed_not_selected_pending_execution",
+      "custom_base_qualification_status": "not_applicable",
+      "disqualifier_flags": [],
+      "notes": "Named 14B candidate intentionally deferred until bakeoff execution planning. Marginal gains are not enough by themselves."
+    }
+  ],
+  "eligibility_rules": [
+    "exactly_three_candidate_slots",
+    "dense_only",
+    "no_moe",
+    "open_weight_required_for_7b_and_14b_slots",
+    "linux_first_workstation_fit_required",
+    "public_benchmark_prestige_not_a_selection_rule"
+  ],
+  "quality_claim": "none"
+}

@@ -1,0 +1,84 @@
+{
+  "schema": "backend_failure_contract_v1",
+  "version": "v1",
+  "selection_state": "contract_only_not_implemented",
+  "failure_classes": [
+    {
+      "failure_class": "backend_not_configured",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "backend_unavailable",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "model_load_failed",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "malformed_candidate_output",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "schema_validation_failed",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "runtime_execution_failed",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "timeout",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "unsupported_capability",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "degraded_mode_only",
+      "report_status": "blocked_unverified",
+      "retry_justified_in_same_solve": false,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    },
+    {
+      "failure_class": "verification_failed_after_candidate",
+      "report_status": "verification_failed",
+      "retry_justified_in_same_solve": true,
+      "truthful_report_still_possible": true,
+      "must_never_be_misreported_as_success": true
+    }
+  ],
+  "invariants": [
+    "backend_health_must_not_affect_deterministic_exact_task_routing",
+    "verifier_remains_final_authority_on_success",
+    "malformed_or_unavailable_backend_output_is_not_partial_success",
+    "truthful_report_should_still_be_written_when_possible"
+  ],
+  "quality_claim": "none"
+}

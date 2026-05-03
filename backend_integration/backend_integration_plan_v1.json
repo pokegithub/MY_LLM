@@ -1,0 +1,60 @@
+{
+  "schema": "backend_integration_plan_v1",
+  "version": "v1",
+  "selection_state": "plan_only_not_integrated",
+  "purpose": "define_first_honest_model_backend_path_for_verified_agent",
+  "primary_backend_path": {
+    "backend_path_id": "local_transformers_in_process",
+    "path_count": 1,
+    "runtime_style": "single_process_python_local_model_runtime",
+    "model_interface_style": "local_causal_lm_generation_to_structured_candidate",
+    "structured_candidate_contract": {
+      "contract_name": "agent_types_candidate_v1",
+      "required_fields": [
+        "candidate_id",
+        "summary",
+        "edits",
+        "source"
+      ],
+      "edit_fields": [
+        "path",
+        "new_content"
+      ],
+      "multi_candidate_support_required": false,
+      "natural_language_only_output_allowed": false
+    },
+    "target_environment": "linux_first_48gb_workstation_class",
+    "status": "planned_not_integrated"
+  },
+  "unlocks": [
+    "real_model_generated_coding_candidates",
+    "real_hidden_eval_backend_execution_later",
+    "non_scripted_repair_loop_validation"
+  ],
+  "must_not_break": [
+    "deterministic_exact_task_bypass",
+    "verifier_authority",
+    "blocked_unverified_truthfulness",
+    "machine_readable_candidate_boundaries"
+  ],
+  "why_this_path_first": [
+    "no_extra_server_boundary_required",
+    "fewer_moving_parts_for_fail_closed_behavior",
+    "structured_candidate_validation_can_happen_locally",
+    "safer_than_service_style_for_first_truthful_integration"
+  ],
+  "deferred_alternatives": [
+    "vllm_or_service_style_backend",
+    "remote_api_backend",
+    "windows_first_backend_path",
+    "multi_backend_abstraction"
+  ],
+  "integration_touchpoints": {
+    "agent/backend.py": "add_one_concrete_backend_implementing_CodingModelBackend_and_load_it_from_one_new_backend_kind",
+    "agent/orchestrator.py": "no_broad_redesign_keep_backend_loading_exact_bypass_and_verifier_flow_thin",
+    "agent/types.py": "existing_Candidate_and_FileEdit_contract_is_expected_to_remain_primary_candidate_schema",
+    "run.py": "keep_existing_agent_cli_surface_thin",
+    "config.py": "future_narrow_backend_path_and_model_path_fields_only_if_needed_in_implementation_package"
+  },
+  "quality_claim": "none"
+}

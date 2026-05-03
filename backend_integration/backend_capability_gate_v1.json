@@ -1,0 +1,82 @@
+{
+  "schema": "backend_capability_gate_v1",
+  "version": "v1",
+  "selection_state": "gate_only_not_executed",
+  "mandatory_gates": [
+    {
+      "gate_id": "structured_candidate_output_validity",
+      "what_is_checked": "backend can produce one bounded candidate matching the existing Candidate and FileEdit contract",
+      "pass_condition": "output maps cleanly to Candidate without manual repair",
+      "failure_condition": "prose_only_or_missing_required_candidate_fields",
+      "why_it_matters": "the agent loop depends on machine-readable bounded edits",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "schema_adherence_parse_reliability",
+      "what_is_checked": "candidate payloads remain parseable across the seed gate set",
+      "pass_condition": "parseable_rate_at_least_0_95",
+      "failure_condition": "frequent_malformed_or_unparseable_outputs",
+      "why_it_matters": "malformed outputs should not dominate the solve path",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "coding_usefulness_beyond_no_backend_baseline",
+      "what_is_checked": "backend improves on the blocked no-backend baseline on hidden coding seed tasks",
+      "pass_condition": "at_least_one_non_fixture_hidden_coding_task_reaches_verified_success_and_blocked_rate_improves",
+      "failure_condition": "no_verified_success_and_no_material_improvement_over_no_backend",
+      "why_it_matters": "a connected backend is not useful if it does not outperform the current blocked path",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "clean_failure_surfacing",
+      "what_is_checked": "load runtime and output failures map to explicit backend failure classes",
+      "pass_condition": "failures_are_explicit_and_never_misreported_as_success",
+      "failure_condition": "backend_errors_are_silent_or_blurred_into_progress",
+      "why_it_matters": "the repo is evidence-first and fail-closed",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "deterministic_exact_task_bypass_preserved",
+      "what_is_checked": "exact symbolic tasks remain independent of backend generation",
+      "pass_condition": "backend_health_does_not_affect_exact_task_route",
+      "failure_condition": "exact_tasks_depend_on_backend_availability",
+      "why_it_matters": "exact deterministic routing is already a core truthfulness guarantee",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "verifier_compatibility",
+      "what_is_checked": "backend candidates still require a green VerificationReport before solve success",
+      "pass_condition": "no_candidate_can_become_verified_success_without_verifier_pass",
+      "failure_condition": "model_output_is_treated_as_sufficient",
+      "why_it_matters": "verifier_authority_is_core_to_the_existing_agent_design",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "retry_loop_compatibility",
+      "what_is_checked": "backend can supply initial and repair candidates or explicitly decline repair support",
+      "pass_condition": "repair_path_remains_machine_readable_and_bounded",
+      "failure_condition": "repair_support_is_ambiguous_or_incompatible_with_attempt_tracking",
+      "why_it_matters": "the current agent loop already has bounded repair semantics",
+      "required_for_first_integration": true
+    },
+    {
+      "gate_id": "runtime_stability_linux_first_workstation",
+      "what_is_checked": "loading and generation are stable enough on the intended Linux-first workstation path",
+      "pass_condition": "no_repeated_load_failures_or_persistent_runtime_instability_during_seed_gate_runs",
+      "failure_condition": "instability_or_oom_behavior_dominates_the_loop",
+      "why_it_matters": "runtime fit is part of the bakeoff and cannot be bolted on later",
+      "required_for_first_integration": true
+    }
+  ],
+  "optional_gates": [
+    {
+      "gate_id": "optimization_compatibility",
+      "what_is_checked": "backend can optionally supply a post-green optimization candidate or explicitly decline cleanly",
+      "pass_condition": "optimizer_path_works_or_backend_declines_explicitly_without_breaking_solve",
+      "failure_condition": "optimization_support_is_falsely_claimed_or_breaks_verified_good_rollback",
+      "why_it_matters": "phase_2_optimizer_behavior_should_not_be_corrupted",
+      "required_for_first_integration": false
+    }
+  ],
+  "quality_claim": "none"
+}

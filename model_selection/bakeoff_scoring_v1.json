@@ -1,0 +1,109 @@
+{
+  "schema": "bakeoff_scoring_v1",
+  "version": "v1",
+  "total_weight": 100,
+  "selection_state": "rubric_only_no_candidate_scored",
+  "dimensions": [
+    {
+      "dimension_id": "hidden_exact_symbolic_correctness",
+      "why_it_matters": "Exactness matters because this repo already treats exact-tool discipline as a first-class behavior.",
+      "measurement_source": "evals/hidden exact_symbolic_correctness category",
+      "scoring_method": "private exact task pass rate",
+      "weight": 10,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "hidden_coding_final_verified_success",
+      "why_it_matters": "Final verified coding success is the most important direct measure of solving value for this repo.",
+      "measurement_source": "evals/hidden coding_patch_success category",
+      "scoring_method": "verified green rate on hidden coding tasks",
+      "weight": 22,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "hidden_coding_repair_loop_success",
+      "why_it_matters": "The completed agent loop includes bounded repair, so repair lift must be measured explicitly.",
+      "measurement_source": "evals/hidden coding_repair_loop_success category",
+      "scoring_method": "verified repair success rate within retry budget",
+      "weight": 14,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "abstention_precision",
+      "why_it_matters": "Unsupported confident answers are operationally harmful in a system that values truthful blocked and abstain behavior.",
+      "measurement_source": "evals/hidden abstention_need_tool_need_source category",
+      "scoring_method": "correct abstain/tool/source decision precision",
+      "weight": 10,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "source_grounded_truthfulness",
+      "why_it_matters": "Truthfulness here means staying within supported claims and citing required evidence.",
+      "measurement_source": "evals/hidden source_grounded_truthfulness category",
+      "scoring_method": "supported answer rate with valid required citations",
+      "weight": 12,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "retrieval_grounded_qa",
+      "why_it_matters": "The future system path depends on evidence-grounded retrieval rather than unsupported world-knowledge bluffing.",
+      "measurement_source": "evals/hidden retrieval_grounded_qa category",
+      "scoring_method": "retrieval-grounded supported answer rate with citation compliance",
+      "weight": 10,
+      "direction": "higher_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "runtime_fit_stability",
+      "why_it_matters": "A candidate that is unstable or routinely blocked at runtime is not a serious main-path choice.",
+      "measurement_source": "bakeoff runtime execution logs and solve reports",
+      "scoring_method": "stable execution rate across protocol tasks",
+      "weight": 8,
+      "direction": "higher_is_better",
+      "minimum_threshold": 0.9
+    },
+    {
+      "dimension_id": "structured_output_reliability",
+      "why_it_matters": "The agent loop needs parseable, machine-readable outputs and narrow patch behavior.",
+      "measurement_source": "agent solve reports and backend schema adherence checks",
+      "scoring_method": "structured candidate schema adherence rate",
+      "weight": 6,
+      "direction": "higher_is_better",
+      "minimum_threshold": 0.95
+    },
+    {
+      "dimension_id": "cost_latency_per_verified_success",
+      "why_it_matters": "Cost and latency matter only in relation to verified success, not as raw speed theater.",
+      "measurement_source": "solve reports with verifier-loop timing and runtime accounting",
+      "scoring_method": "normalized cost and latency per verified success",
+      "weight": 4,
+      "direction": "lower_is_better",
+      "minimum_threshold": null
+    },
+    {
+      "dimension_id": "deployment_fit_linux_first_workstation",
+      "why_it_matters": "The chosen main path must fit the intended Linux-first workstation trajectory rather than a vague future deployment story.",
+      "measurement_source": "deployment-info constraints plus actual workstation execution behavior",
+      "scoring_method": "pass/fail deployment fit plus graded workstation practicality",
+      "weight": 4,
+      "direction": "higher_is_better",
+      "minimum_threshold": 1.0
+    }
+  ],
+  "decision_notes": [
+    "Hidden private evals are primary.",
+    "Public benchmark prestige is not a scoring dimension.",
+    "The custom base does not receive sentimental preference.",
+    "The 14B slot does not receive automatic preference for being larger."
+  ],
+  "tie_break_rules": [
+    "If candidates are within five weighted points, prefer the better runtime fit and lower cost per verified success.",
+    "Do not break ties using public benchmark reputation."
+  ],
+  "quality_claim": "none"
+}

@@ -14,8 +14,8 @@
 ### Last synchronization
 
 - Date: 2026-05-03
-- Scope: Inventory, command-surface, agent-subsystem synchronization, and the first private hidden-eval backbone artifact set. This was not a brand-new full-model audit.
-- Module count: 90 Python modules.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, and the Phase A backend integration planning artifacts. This was not a brand-new full-model audit.
+- Module count: 92 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -114,6 +114,25 @@
 - `data_governance/allowed_corpus_manifest_v1.json` is intentionally tiny and currently permits only a narrow repo-policy allowance where the repo has documented evidence strong enough to do so honestly.
 - `data_governance/benchmark_holdout_policy_v1.md` ties configured benchmark exclusions and hidden-eval assets to training exclusion rules.
 - This package does not provide legal clearance. `legal_clearance_claim` remains `none`, and most configured sources remain blocked or excluded.
+
+### Phase A base-model bakeoff protocol update
+
+- Date: 2026-05-03
+- Scope: Added a narrow base-model decision framework under `model_selection/` for future Phase A bakeoff execution.
+- `model_selection/bakeoff_protocol_v1.md` and `bakeoff_protocol_v1.json` define scope, hardware assumptions, required hidden-eval inputs, decision rules, and what does not belong in the bakeoff.
+- `model_selection/bakeoff_candidate_matrix_v1.json` defines exactly three candidate slots: current custom base, one open dense 7B-class slot, and one open dense 14B-class slot.
+- The current custom base is explicitly not a full contender unless a real usable checkpoint exists. As of protocol v1, the standard repo checkpoint/status surface does not evidence such a checkpoint.
+- `model_selection/bakeoff_scoring_v1.md` and `bakeoff_scoring_v1.json` prioritize hidden verified task success, truthfulness, abstention, runtime fit, structured output reliability, and cost per verified success over public benchmark prestige.
+
+### Phase A backend integration planning update
+
+- Date: 2026-05-03
+- Scope: Added a narrow first-backend integration plan under `backend_integration/`.
+- The chosen first backend path is intentionally conservative: one Linux-first in-process local Transformers backend using the existing `Candidate` contract rather than a broader service-style or multi-backend design.
+- `backend_integration/backend_integration_plan_v1.*` defines the one-path-first decision, touchpoints, and explicit deferrals.
+- `backend_integration/backend_capability_gate_v1.*` defines the minimum integration bar: structured candidate validity, parse reliability, usefulness over the no-backend baseline, exact-task bypass preservation, verifier compatibility, retry-loop compatibility, and workstation runtime stability.
+- `backend_integration/backend_failure_contract_v1.*` defines explicit backend failure classes and keeps backend failures from being misreported as successful solves.
+- This package does not integrate a backend. It defines the first honest path and its gates only.
 
 ---
 
@@ -233,13 +252,15 @@
 
 - `serving/server.py`
 
-#### tests/ (19)
+#### tests/ (21)
 
 - `tests/test_agent_phase1.py`
 - `tests/test_agent_phase2.py`
 - `tests/test_agent_phase3.py`
 - `tests/test_agent_phase4.py`
 - `tests/test_audit_truthfulness.py`
+- `tests/test_bakeoff_protocol_assets.py`
+- `tests/test_backend_integration_plan_assets.py`
 - `tests/test_cli_truthfulness.py`
 - `tests/test_config_profiles.py`
 - `tests/test_core_lr_schedule.py`

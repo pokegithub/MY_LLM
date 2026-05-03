@@ -1,0 +1,69 @@
+{
+  "schema": "bakeoff_protocol_v1",
+  "version": "v1",
+  "purpose": "select_main_base_model_path_using_hidden_eval_and_runtime_evidence",
+  "selection_state": "protocol_only_no_candidate_selected",
+  "candidate_slot_count": 3,
+  "scope_rules": {
+    "dense_only": true,
+    "moe_allowed": false,
+    "open_weight_required_for_open_slots": true,
+    "linux_first_workstation_required": true,
+    "cloud_only_candidates_allowed": false
+  },
+  "required_inputs": [
+    "evals/hidden/hidden_eval_spec_v1.json",
+    "evals/hidden/hidden_eval_seed_set_v1.jsonl",
+    "evals/hidden/hidden_eval_holdout_hash_registry_v1.json",
+    "data_governance/allowed_corpus_manifest_v1.json",
+    "run.py status",
+    "run.py deployment-info"
+  ],
+  "hardware_assumptions": {
+    "primary_execution_env": "linux_first_48gb_workstation_class",
+    "rtx_2050_role": "spec_only_not_serious_bakeoff_execution",
+    "serious_cloud_required": false
+  },
+  "runtime_assumptions": {
+    "structured_output_reliability_matters": true,
+    "runtime_fit_matters": true,
+    "deployment_fit_matters": true,
+    "backend_integration_in_scope": false
+  },
+  "decision_rules": [
+    "hidden_private_eval_is_primary",
+    "final_verified_task_success_over_public_prestige",
+    "repair_loop_success_over_one_shot_polish",
+    "runtime_instability_is_disqualifying_if_severe",
+    "governance_readiness_for_later_post_training_remains_separate"
+  ],
+  "custom_base_pivot_criteria": {
+    "qualification_status_field_required": true,
+    "not_full_contender_if_no_real_usable_checkpoint": true,
+    "demote_to_r_and_d_if_materially_worse_hidden_eval_than_open_dense_alternatives": true,
+    "demote_to_r_and_d_if_serious_runtime_or_backend_incompatibility": true,
+    "keep_main_path_only_if_wins_on_meaningful_evidence": true,
+    "current_repo_evidence": "run.py status currently reports missing pretrain, SFT, DPO, and improved checkpoints in the standard checkpoint surface"
+  },
+  "success_definition": [
+    "top_ranked_candidate_is_supported_by_weighted_hidden_eval_and_runtime_rubric",
+    "decision_is_auditable_from_artifacts",
+    "no_candidate_is_preselected"
+  ],
+  "failure_definition": [
+    "public_benchmark_prestige_drives_selection",
+    "runtime_fit_is_ignored",
+    "custom_base_kept_without_qualification_evidence",
+    "14b_candidate_chosen_without_clear_quality_advantage"
+  ],
+  "excluded_from_scope": [
+    "bakeoff_execution",
+    "model_downloads",
+    "backend_integration",
+    "retrieval_implementation",
+    "moe_planning",
+    "giant_context_planning",
+    "public_benchmark_dashboard_work"
+  ],
+  "quality_claim": "none"
+}
