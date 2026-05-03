@@ -696,12 +696,12 @@ class HardwareProfileConfig:
 
 @dataclass
 class AgentConfig:
-    """Configuration for the Phase 1 verified coding-agent surface."""
+    """Configuration for the verified coding-agent surface."""
     report_dir              : str = "./run_artifacts/agent"
     backend_kind            : str = "none"
     backend_script_path     : Optional[str] = None
     max_file_excerpt_chars  : int = 4000
-    default_retry_budget    : int = 0
+    default_retry_budget    : int = 3
 
 
 model_cfg = ModelConfig()

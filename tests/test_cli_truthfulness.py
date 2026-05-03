@@ -87,6 +87,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["route"]["route"], "exact_symbolic")
         self.assertEqual(payload["status"], "verified_success")
         self.assertEqual(payload["quality_claim"], "verification_passed")
+        self.assertEqual(payload["attempts"], [])
 
     def test_agent_plan_reports_plan_ready_not_blocked(self):
         result = self.run_command(
@@ -100,6 +101,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["route"]["route"], "exact_symbolic")
         self.assertEqual(payload["status"], "plan_ready")
         self.assertEqual(payload["quality_claim"], "none")
+        self.assertEqual(payload["schema"], "agent_phase2_report_v1")
 
     def test_agent_coding_task_without_backend_fails_closed(self):
         result = self.run_command(
@@ -117,6 +119,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["route"]["route"], "coding_edit")
         self.assertEqual(payload["status"], "blocked_unverified")
         self.assertIn("no coding backend configured", payload["blocked_reason"])
+        self.assertEqual(payload["attempts"], [])
 
 
 if __name__ == "__main__":

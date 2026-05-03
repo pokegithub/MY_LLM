@@ -94,14 +94,14 @@ class AgentPlanningTests(unittest.TestCase):
         context = build_context(request)
         plan = build_plan(request, route, context)
         self.assertEqual(plan.route, ROUTE_CODING)
-        self.assertEqual(plan.retry_budget, 0)
+        self.assertEqual(plan.retry_budget, 3)
         self.assertTrue(plan.checks)
 
     def test_plan_command_writes_report(self):
         payload = plan_task(
             TaskRequest(task_text='count substring "ana" in "banana"')
         )
-        self.assertEqual(payload["schema"], "agent_phase1_report_v1")
+        self.assertEqual(payload["schema"], "agent_phase2_report_v1")
         self.assertEqual(payload["status"], PLAN_STATUS_READY)
         self.assertTrue(os.path.isfile(payload["report_path"]))
 
@@ -213,6 +213,7 @@ class AgentSolveTests(unittest.TestCase):
             )
 
             self.assertEqual(result["status"], SOLVE_STATUS_VERIFIED)
+            self.assertEqual(result["final_origin"], "initial")
             self.assertEqual(result["quality_claim"], "verification_passed")
             with open(module_path, "r", encoding="utf-8") as handle:
                 self.assertIn("return a + b", handle.read())

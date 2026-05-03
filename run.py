@@ -3,8 +3,8 @@ run.py — Master orchestrator for the full SLM pipeline
 
 Usage:
   python run.py agent-plan     Build a machine-readable agent plan
-  python run.py agent-solve    Run the Phase 1 verified coding-agent solve path
-  python run.py agent-verify   Run the Phase 1 verified coding-agent verification path
+  python run.py agent-solve    Run the verified coding-agent solve path
+  python run.py agent-verify   Run the verified coding-agent verification path
   python run.py tokenizer      Train the BPE tokenizer
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
@@ -417,6 +417,10 @@ def _print_agent_report(title: str, payload: dict):
     print(f"  status         : {payload['status']}")
     print(f"  backend        : {payload['backend_status'].get('kind', 'unknown')}")
     print(f"  report_path    : {os.path.abspath(payload['report_path'])}")
+    attempts = payload.get("attempts") or []
+    print(f"  attempts       : {len(attempts)}")
+    print(f"  final_origin   : {payload.get('final_origin', 'none')}")
+    print(f"  optimization   : {payload.get('optimization_status', 'not_attempted')}")
     if payload.get("blocked_reason"):
         print(f"  blocked_reason : {payload['blocked_reason']}")
     if payload.get("degraded_mode"):
@@ -444,6 +448,7 @@ def run_agent_solve(args):
     payload = solve_task(
         _build_agent_request(args),
         backend_script_path=args.backend_script,
+        optimize=bool(args.optimize),
     )
     if OUTPUT_JSON:
         _emit_json(payload)
@@ -1379,8 +1384,8 @@ def main():
         epilog="""
 Commands:
   agent-plan   Build a machine-readable agent plan for one task
-  agent-solve  Run the Phase 1 agent solve path
-  agent-verify Run the Phase 1 agent verification path
+  agent-solve  Run the Phase 2 agent solve path
+  agent-verify Run the Phase 2 agent verification path
   tokenizer    Train the BPE tokenizer
   download     Download and cache training data
     download-safe Download with network-safe defaults
@@ -1474,7 +1479,12 @@ Commands:
     parser.add_argument(
         "--backend-script",
         default=None,
-        help="Path to a scripted candidate JSON file for Phase 1 agent solve.",
+        help="Path to a scripted candidate JSON file for agent solve.",
+    )
+    parser.add_argument(
+        "--optimize",
+        action="store_true",
+        help="Attempt the bounded post-green optimizer after solve verification passes.",
     )
 
     args = parser.parse_args()

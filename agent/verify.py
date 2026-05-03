@@ -1,4 +1,4 @@
-"""Structured verifier for Phase 1 agent actions."""
+"""Structured verifier for agent actions."""
 
 from __future__ import annotations
 
@@ -84,29 +84,45 @@ def run_verification(
             )
             continue
 
-        completed = subprocess.run(
-            cmd,
-            cwd=workspace_root,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        stdout_saved = _write_stream(stdout_path, completed.stdout)
-        stderr_saved = _write_stream(stderr_path, completed.stderr)
-        summary_source = completed.stderr or completed.stdout or f"exit_code={completed.returncode}"
-        summary_lines = summary_source.strip().splitlines()[:4]
-        results.append(
-            CheckResult(
-                check_type=check.check_type,
-                spec=check.spec,
-                passed=completed.returncode == 0,
-                exit_code=int(completed.returncode),
-                summary=" | ".join(line[:240] for line in summary_lines)[:800],
-                stdout_path=stdout_saved,
-                stderr_path=stderr_saved,
-                evidence={"command": cmd},
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=workspace_root,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
-        )
+            stdout_saved = _write_stream(stdout_path, completed.stdout)
+            stderr_saved = _write_stream(stderr_path, completed.stderr)
+            summary_source = completed.stderr or completed.stdout or f"exit_code={completed.returncode}"
+            summary_lines = summary_source.strip().splitlines()[:4]
+            results.append(
+                CheckResult(
+                    check_type=check.check_type,
+                    spec=check.spec,
+                    passed=completed.returncode == 0,
+                    exit_code=int(completed.returncode),
+                    summary=" | ".join(line[:240] for line in summary_lines)[:800],
+                    stdout_path=stdout_saved,
+                    stderr_path=stderr_saved,
+                    evidence={"command": cmd},
+                )
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout_saved = _write_stream(stdout_path, exc.stdout or "")
+            stderr_saved = _write_stream(stderr_path, exc.stderr or "")
+            results.append(
+                CheckResult(
+                    check_type=check.check_type,
+                    spec=check.spec,
+                    passed=False,
+                    exit_code=None,
+                    summary=f"verification timeout after {exc.timeout}s",
+                    stdout_path=stdout_saved,
+                    stderr_path=stderr_saved,
+                    evidence={"command": cmd, "timeout_seconds": exc.timeout},
+                )
+            )
 
     meaningful = any(check.meaningful for check in checks)
     overall_passed = bool(results) and meaningful and all(item.passed for item in results)

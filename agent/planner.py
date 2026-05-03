@@ -1,4 +1,4 @@
-"""Machine-readable planner for the Phase 1 coding agent."""
+"""Machine-readable planner for the verified coding agent."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from agent.types import (
     SolvePlan,
     TaskRequest,
 )
+from config import agent_cfg
 
 
 def _normalize_check(raw: str) -> PlanCheck | None:
@@ -91,11 +92,12 @@ def build_plan(
                 "all verification checks pass",
                 "failed candidate edits are rolled back",
             ),
-            retry_budget=0,
+            retry_budget=max(0, int(agent_cfg.default_retry_budget)),
             stop_conditions=(
                 "stop if no backend is configured",
                 "stop if no meaningful validator exists",
-                "stop after first failed verification; Phase 2 repair loop is not active",
+                "stop after retry budget is exhausted",
+                "stop if the critic marks repair as unjustified",
             ),
         )
 
@@ -107,5 +109,5 @@ def build_plan(
         risk_level="low",
         success_criteria=("task is either supported or explicitly blocked",),
         retry_budget=0,
-        stop_conditions=("stop because this route is not implemented in Phase 1",),
+        stop_conditions=("stop because this route is not implemented in the current agent phase",),
     )

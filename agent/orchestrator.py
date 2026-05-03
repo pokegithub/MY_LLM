@@ -1,4 +1,4 @@
-"""Top-level Phase 1 agent orchestration."""
+"""Top-level Phase 2 agent orchestration."""
 
 from __future__ import annotations
 
@@ -6,17 +6,23 @@ import json
 import os
 import time
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
-from agent.backend import load_backend
+from agent.backend import CodingModelBackend, load_backend
+from agent.critic import critique_failure
 from agent.context import build_context
 from agent.exact_tools import execute_exact_task
+from agent.optimize import run_optimizer
 from agent.planner import build_plan
 from agent.router import route_task
 from agent.types import (
+    OPTIMIZATION_NOT_ATTEMPTED,
     PLAN_STATUS_READY,
     ROUTE_CODING,
     ROUTE_EXACT,
+    AttemptRecord,
+    Candidate,
+    Critique,
     SOLVE_STATUS_BLOCKED,
     SOLVE_STATUS_FAILED,
     SOLVE_STATUS_UNSUPPORTED,
@@ -73,6 +79,11 @@ def _finalize(
     files_touched: List[str],
     blocked_reason: Optional[str],
     candidate=None,
+    retry_budget: int = 0,
+    attempts: Sequence[AttemptRecord] = (),
+    final_origin: str = "none",
+    winning_attempt: Optional[int] = None,
+    optimization_status: str = OPTIMIZATION_NOT_ATTEMPTED,
 ) -> Dict:
     result = SolveResult(
         run_id=run_id,
@@ -89,9 +100,14 @@ def _finalize(
         quality_claim=verification.quality_claim if status == SOLVE_STATUS_VERIFIED else "none",
         report_path="",
         candidate=candidate,
+        retry_budget=retry_budget,
+        attempts=tuple(attempts),
+        final_origin=final_origin,
+        winning_attempt=winning_attempt,
+        optimization_status=optimization_status,
     )
     payload = to_dict(result)
-    payload["schema"] = "agent_phase1_report_v1"
+    payload["schema"] = "agent_phase2_report_v1"
     payload["timestamp"] = int(time.time())
     report_path = _write_report(run_dir, payload)
     payload["report_path"] = report_path
@@ -134,6 +150,85 @@ def _finalize(
     return payload
 
 
+def _empty_attempt_history() -> tuple[AttemptRecord, ...]:
+    return ()
+
+
+def _attempt_record(
+    *,
+    attempt_index: int,
+    phase: str,
+    origin: str,
+    candidate: Candidate,
+    files_touched: Sequence[str],
+    verification: VerificationReport,
+    critique: Optional[Critique],
+    kept: bool,
+) -> AttemptRecord:
+    return AttemptRecord(
+        attempt_index=attempt_index,
+        phase=phase,
+        origin=origin,
+        candidate_id=candidate.candidate_id,
+        candidate_summary=candidate.summary,
+        files_touched=tuple(files_touched),
+        verification=verification,
+        critique=critique,
+        kept=kept,
+    )
+
+
+def _run_coding_attempt(
+    *,
+    context: ContextBundle,
+    plan,
+    run_dir: str,
+    candidate: Candidate,
+) -> tuple[List[str], VerificationReport, bool]:
+    session = WorkspaceEditSession(context.workspace_root)
+    touched = session.apply_candidate(candidate)
+    verification = run_verification(
+        workspace_root=context.workspace_root,
+        checks=list(plan.checks),
+        run_dir=run_dir,
+    )
+    if verification.overall_passed:
+        session.commit()
+        return touched, verification, True
+    session.rollback()
+    return touched, verification, False
+
+
+def _generate_initial_candidate(
+    *,
+    backend: CodingModelBackend,
+    request: TaskRequest,
+    context: ContextBundle,
+    plan,
+) -> Candidate:
+    return backend.generate_initial_candidate(request, context, plan)
+
+
+def _generate_repair_candidate(
+    *,
+    backend: CodingModelBackend,
+    request: TaskRequest,
+    context: ContextBundle,
+    plan,
+    critique: Critique,
+    previous_candidate: Candidate,
+    attempt_history: Sequence[AttemptRecord],
+) -> Optional[Candidate]:
+    return backend.generate_repair_candidate(
+        request,
+        context,
+        plan,
+        critique,
+        previous_candidate,
+        attempt_history,
+    )
+
+
 def plan_task(request: TaskRequest) -> Dict:
     run_id, run_dir = _new_run_dir("plan")
     route = route_task(request)
@@ -157,6 +252,7 @@ def plan_task(request: TaskRequest) -> Dict:
         status=PLAN_STATUS_READY if route.supported else SOLVE_STATUS_UNSUPPORTED,
         files_touched=[],
         blocked_reason=None if route.supported else route.reason,
+        attempts=_empty_attempt_history(),
     )
 
 
@@ -188,6 +284,8 @@ def verify_task(request: TaskRequest) -> Dict:
                 status=SOLVE_STATUS_UNSUPPORTED,
                 files_touched=[],
                 blocked_reason=str(exc),
+                attempts=_empty_attempt_history(),
+                final_origin="deterministic_exact_tool",
             )
         verification = run_verification(
             workspace_root=context.workspace_root,
@@ -209,6 +307,8 @@ def verify_task(request: TaskRequest) -> Dict:
             status=status,
             files_touched=[],
             blocked_reason=None if status == SOLVE_STATUS_VERIFIED else "exact validation failed",
+            attempts=_empty_attempt_history(),
+            final_origin="deterministic_exact_tool",
         )
 
     if route.route != ROUTE_CODING:
@@ -221,10 +321,11 @@ def verify_task(request: TaskRequest) -> Dict:
             backend_status={"configured": False, "available": False, "kind": "none"},
             plan=plan,
             context=context,
-            verification=_empty_verification("verification route unsupported in Phase 1"),
+            verification=_empty_verification("verification route unsupported in Phase 2"),
             status=SOLVE_STATUS_UNSUPPORTED,
             files_touched=[],
             blocked_reason=route.reason,
+            attempts=_empty_attempt_history(),
         )
 
     if not plan.checks:
@@ -241,6 +342,8 @@ def verify_task(request: TaskRequest) -> Dict:
             status=SOLVE_STATUS_BLOCKED,
             files_touched=[],
             blocked_reason="no meaningful validator exists",
+            retry_budget=plan.retry_budget,
+            attempts=_empty_attempt_history(),
         )
 
     verification = run_verification(
@@ -262,6 +365,9 @@ def verify_task(request: TaskRequest) -> Dict:
         status=status,
         files_touched=[],
         blocked_reason=None if status == SOLVE_STATUS_VERIFIED else "workspace verification failed",
+        retry_budget=plan.retry_budget,
+        attempts=_empty_attempt_history(),
+        final_origin="verification_only",
     )
 
 
@@ -269,6 +375,7 @@ def solve_task(
     request: TaskRequest,
     *,
     backend_script_path: Optional[str] = None,
+    optimize: bool = False,
 ) -> Dict:
     run_id, run_dir = _new_run_dir("solve")
     route = route_task(request)
@@ -297,6 +404,8 @@ def solve_task(
                 status=SOLVE_STATUS_UNSUPPORTED,
                 files_touched=[],
                 blocked_reason=str(exc),
+                attempts=_empty_attempt_history(),
+                final_origin="deterministic_exact_tool",
             )
         verification = run_verification(
             workspace_root=context.workspace_root,
@@ -318,6 +427,8 @@ def solve_task(
             status=status,
             files_touched=[],
             blocked_reason=None if status == SOLVE_STATUS_VERIFIED else "exact validation failed",
+            attempts=_empty_attempt_history(),
+            final_origin="deterministic_exact_tool",
         )
 
     if route.route != ROUTE_CODING:
@@ -330,10 +441,11 @@ def solve_task(
             backend_status={"configured": False, "available": False, "kind": "none"},
             plan=plan,
             context=context,
-            verification=_empty_verification("route unsupported in Phase 1"),
+            verification=_empty_verification("route unsupported in Phase 2"),
             status=SOLVE_STATUS_UNSUPPORTED,
             files_touched=[],
             blocked_reason=route.reason,
+            attempts=_empty_attempt_history(),
         )
 
     if not plan.checks:
@@ -350,6 +462,8 @@ def solve_task(
             status=SOLVE_STATUS_BLOCKED,
             files_touched=[],
             blocked_reason="no meaningful validator exists",
+            retry_budget=plan.retry_budget,
+            attempts=_empty_attempt_history(),
         )
 
     backend, backend_status = load_backend(
@@ -370,24 +484,142 @@ def solve_task(
             status=SOLVE_STATUS_BLOCKED,
             files_touched=[],
             blocked_reason=backend_status.get("reason", "no backend available"),
+            retry_budget=plan.retry_budget,
+            attempts=_empty_attempt_history(),
+        )
+    attempts: List[AttemptRecord] = []
+    retry_budget = max(0, int(plan.retry_budget))
+    winning_candidate: Optional[Candidate] = None
+    final_origin = "none"
+    winning_attempt: Optional[int] = None
+    optimization_status = OPTIMIZATION_NOT_ATTEMPTED
+    files_touched: List[str] = []
+
+    try:
+        current_candidate = _generate_initial_candidate(
+            backend=backend,
+            request=request,
+            context=context,
+            plan=plan,
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        return _finalize(
+            run_id=run_id,
+            run_dir=run_dir,
+            operation="solve",
+            request=request,
+            route=route,
+            backend_status=backend_status,
+            plan=plan,
+            context=context,
+            verification=_empty_verification("backend could not produce an initial candidate"),
+            status=SOLVE_STATUS_BLOCKED,
+            files_touched=[],
+            blocked_reason=f"backend initial candidate generation failed: {exc}",
+            retry_budget=retry_budget,
+            attempts=tuple(attempts),
         )
 
-    candidate = backend.generate_candidate(request, context, plan)
-    session = WorkspaceEditSession(context.workspace_root)
-    touched = session.apply_candidate(candidate)
-    verification = run_verification(
-        workspace_root=context.workspace_root,
-        checks=list(plan.checks),
-        run_dir=run_dir,
-    )
-    if verification.overall_passed:
-        session.commit()
-        status = SOLVE_STATUS_VERIFIED
-        blocked_reason = None
-    else:
-        session.rollback()
-        status = SOLVE_STATUS_FAILED
-        blocked_reason = "verification failed; applied edits were rolled back"
+    verification = _empty_verification("candidate verification did not run")
+    status = SOLVE_STATUS_FAILED
+    blocked_reason = "verification failed"
+
+    for repair_index in range(retry_budget + 1):
+        phase = "initial" if repair_index == 0 else "repair"
+        origin = "initial" if repair_index == 0 else "repaired"
+        touched, verification, passed = _run_coding_attempt(
+            context=context,
+            plan=plan,
+            run_dir=run_dir,
+            candidate=current_candidate,
+        )
+        files_touched = list(touched)
+        if passed:
+            record = _attempt_record(
+                attempt_index=repair_index + 1,
+                phase=phase,
+                origin=origin,
+                candidate=current_candidate,
+                files_touched=touched,
+                verification=verification,
+                critique=None,
+                kept=True,
+            )
+            attempts.append(record)
+            winning_candidate = current_candidate
+            final_origin = origin
+            winning_attempt = repair_index + 1
+            status = SOLVE_STATUS_VERIFIED
+            blocked_reason = None
+            break
+
+        critique = critique_failure(
+            verification=verification,
+            candidate=current_candidate,
+            plan=plan,
+            context=context,
+        )
+        attempts.append(
+            _attempt_record(
+                attempt_index=repair_index + 1,
+                phase=phase,
+                origin=origin,
+                candidate=current_candidate,
+                files_touched=touched,
+                verification=verification,
+                critique=critique,
+                kept=False,
+            )
+        )
+        blocked_reason = critique.blocked_reason or "verification failed; applied edits were rolled back"
+
+        if critique.blocked_reason:
+            status = SOLVE_STATUS_BLOCKED
+            break
+        if repair_index >= retry_budget:
+            status = SOLVE_STATUS_FAILED
+            break
+
+        try:
+            next_candidate = _generate_repair_candidate(
+                backend=backend,
+                request=request,
+                context=context,
+                plan=plan,
+                critique=critique,
+                previous_candidate=current_candidate,
+                attempt_history=tuple(attempts),
+            )
+        except (OSError, ValueError, KeyError) as exc:
+            status = SOLVE_STATUS_BLOCKED
+            blocked_reason = f"backend repair candidate generation failed: {exc}"
+            break
+        if next_candidate is None:
+            status = SOLVE_STATUS_FAILED
+            blocked_reason = "verification failed; applied edits were rolled back and no additional repair candidate was available"
+            break
+        current_candidate = next_candidate
+
+    if status == SOLVE_STATUS_VERIFIED and optimize and winning_candidate is not None:
+        optimization_status, optimization_attempt, optimized_candidate, optimization_touched = run_optimizer(
+            request=request,
+            context=context,
+            plan=plan,
+            backend=backend,
+            winning_candidate=winning_candidate,
+            attempt_history=tuple(attempts),
+            run_dir=run_dir,
+        )
+        if optimization_attempt is not None:
+            attempts.append(optimization_attempt)
+        if optimized_candidate is not None and optimization_attempt is not None:
+            winning_candidate = optimized_candidate
+            final_origin = "optimized"
+            winning_attempt = optimization_attempt.attempt_index
+            files_touched = list(optimization_touched)
+            verification = optimization_attempt.verification
+        elif optimization_attempt is not None and optimization_attempt.verification is not None:
+            verification = attempts[winning_attempt - 1].verification if winning_attempt is not None else verification
 
     return _finalize(
         run_id=run_id,
@@ -400,7 +632,12 @@ def solve_task(
         context=context,
         verification=verification,
         status=status,
-        files_touched=touched,
+        files_touched=files_touched if status == SOLVE_STATUS_VERIFIED else [],
         blocked_reason=blocked_reason,
-        candidate=candidate,
+        candidate=winning_candidate,
+        retry_budget=retry_budget,
+        attempts=tuple(attempts),
+        final_origin=final_origin,
+        winning_attempt=winning_attempt,
+        optimization_status=optimization_status,
     )

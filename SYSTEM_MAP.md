@@ -57,6 +57,15 @@
 - Exact symbolic tasks are hard-routed to deterministic handlers or return unsupported; they do not fall back to generation.
 - Coding tasks fail closed when no backend is configured or when no meaningful validator exists.
 
+### Agent Phase 2 update
+
+- Date: 2026-05-03
+- Scope: Added an evidence-driven critic, bounded repair loop, post-green optimizer, and structured attempt history to the `agent/` subsystem.
+- Coding tasks can now perform a bounded initial-plus-repair sequence when a backend supplies a repair candidate. Every failed attempt is verified, critiqued, rolled back, and recorded before the next repair is attempted.
+- The optimizer runs only after a verified-green result and reruns the same verification suite. Regressing optimization attempts are rolled back and reported explicitly.
+- Exact symbolic tasks still bypass the coding repair loop and remain deterministic-only.
+- Phase 2 still does not include trajectory retrieval, learning/export hooks, broad factual retrieval, or production model-backend integration. Those remain deferred.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

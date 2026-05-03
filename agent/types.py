@@ -1,4 +1,4 @@
-"""Structured contracts for the Phase 1 verified coding agent."""
+"""Structured contracts for the verified coding agent."""
 
 from __future__ import annotations
 
@@ -17,6 +17,22 @@ SOLVE_STATUS_FAILED = "verification_failed"
 SOLVE_STATUS_BLOCKED = "blocked_unverified"
 SOLVE_STATUS_UNSUPPORTED = "unsupported"
 PLAN_STATUS_READY = "plan_ready"
+
+FAILURE_SYNTAX = "syntax_error"
+FAILURE_IMPORT = "import_error"
+FAILURE_RUNTIME = "runtime_error"
+FAILURE_ASSERTION = "assertion_failure"
+FAILURE_BEHAVIOR = "behavior_mismatch"
+FAILURE_UNSUPPORTED = "unsupported_assumption"
+FAILURE_VERIFIER_MISSING = "verifier_missing"
+FAILURE_TIMEOUT = "timeout"
+FAILURE_PERFORMANCE = "performance_regression"
+FAILURE_UNVERIFIED = "unverified_failure"
+
+OPTIMIZATION_NOT_ATTEMPTED = "not_attempted"
+OPTIMIZATION_KEPT = "attempted_and_kept"
+OPTIMIZATION_ROLLED_BACK = "attempted_and_rolled_back"
+OPTIMIZATION_BLOCKED = "blocked_unverified"
 
 
 @dataclass(frozen=True)
@@ -90,6 +106,16 @@ class Candidate:
 
 
 @dataclass(frozen=True)
+class Critique:
+    failure_class: str
+    root_cause: str
+    repair_targets: Tuple[str, ...]
+    blocked_reason: Optional[str]
+    confidence: float
+    evidence_summary: str
+
+
+@dataclass(frozen=True)
 class CheckResult:
     check_type: str
     spec: str
@@ -111,6 +137,19 @@ class VerificationReport:
 
 
 @dataclass(frozen=True)
+class AttemptRecord:
+    attempt_index: int
+    phase: str
+    origin: str
+    candidate_id: Optional[str]
+    candidate_summary: Optional[str]
+    files_touched: Tuple[str, ...]
+    verification: VerificationReport
+    critique: Optional[Critique] = None
+    kept: bool = False
+
+
+@dataclass(frozen=True)
 class SolveResult:
     run_id: str
     operation: str
@@ -126,6 +165,11 @@ class SolveResult:
     quality_claim: str
     report_path: str
     candidate: Optional[Candidate] = None
+    retry_budget: int = 0
+    attempts: Tuple[AttemptRecord, ...] = ()
+    final_origin: str = "none"
+    winning_attempt: Optional[int] = None
+    optimization_status: str = OPTIMIZATION_NOT_ATTEMPTED
 
 
 def to_dict(value: Any) -> Any:

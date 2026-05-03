@@ -33,6 +33,19 @@ class WorkspaceEditSession:
             return
         self._snapshots[key] = path.read_bytes() if path.exists() else None
 
+    def _purge_bytecode(self, path: Path) -> None:
+        if path.suffix != ".py":
+            return
+        pycache_dir = path.parent / "__pycache__"
+        if not pycache_dir.exists():
+            return
+        stem = path.stem
+        for compiled in pycache_dir.glob(f"{stem}*.pyc"):
+            try:
+                compiled.unlink()
+            except FileNotFoundError:
+                continue
+
     def apply_candidate(self, candidate: Candidate) -> List[str]:
         touched: List[str] = []
         for edit in candidate.edits:
@@ -40,6 +53,7 @@ class WorkspaceEditSession:
             self._snapshot(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(edit.new_content, encoding="utf-8")
+            self._purge_bytecode(path)
             touched.append(str(path))
         self._touched = touched
         return touched
@@ -50,9 +64,11 @@ class WorkspaceEditSession:
             if original is None:
                 if path.exists():
                     path.unlink()
+                self._purge_bytecode(path)
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(original)
+            self._purge_bytecode(path)
         self._committed = False
 
     def commit(self) -> None:
