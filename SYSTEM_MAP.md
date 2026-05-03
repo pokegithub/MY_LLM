@@ -44,6 +44,19 @@
 - `validate-short-run` runs a bounded multi-step real-token train/resume/checkpoint/eval-gate validation path. It is not pretraining and makes no model-quality claim.
 - Real pretraining readiness remains controlled by `train-preflight`; validation reports do not override preflight.
 
+### Agent Phase 1 update
+
+- Date: 2026-05-03
+- Scope: Added a new adjacent `agent/` subsystem for a minimum viable verified coding-agent loop.
+- New CLI commands:
+  - `agent-plan`
+  - `agent-solve`
+  - `agent-verify`
+- Phase 1 supports deterministic exact-task routing, conservative coding-task routing, targeted context gathering, machine-readable planning, fail-closed backend loading, reversible workspace edits, structured verification, and machine-readable agent reports.
+- Phase 1 does not include a repair loop, optimizer loop, trajectory learning, factual retrieval subsystem, or open-ended generation backend.
+- Exact symbolic tasks are hard-routed to deterministic handlers or return unsupported; they do not fall back to generation.
+- Coding tasks fail closed when no backend is configured or when no meaningful validator exists.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

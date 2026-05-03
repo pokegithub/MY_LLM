@@ -75,6 +75,49 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["quality_claim"], "none")
         self.assertGreater(payload["artifact_count"], 0)
 
+    def test_agent_exact_task_json_is_deterministic(self):
+        result = self.run_command(
+            "agent-solve",
+            "--task",
+            'count substring "ana" in "banana"',
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["route"]["route"], "exact_symbolic")
+        self.assertEqual(payload["status"], "verified_success")
+        self.assertEqual(payload["quality_claim"], "verification_passed")
+
+    def test_agent_plan_reports_plan_ready_not_blocked(self):
+        result = self.run_command(
+            "agent-plan",
+            "--task",
+            "arithmetic: 2 + 2 * 5",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["route"]["route"], "exact_symbolic")
+        self.assertEqual(payload["status"], "plan_ready")
+        self.assertEqual(payload["quality_claim"], "none")
+
+    def test_agent_coding_task_without_backend_fails_closed(self):
+        result = self.run_command(
+            "agent-solve",
+            "--task",
+            "Fix the bug in tests/test_cli_truthfulness.py",
+            "--file-hint",
+            "tests/test_cli_truthfulness.py",
+            "--check",
+            "compileall:tests/test_cli_truthfulness.py",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["route"]["route"], "coding_edit")
+        self.assertEqual(payload["status"], "blocked_unverified")
+        self.assertIn("no coding backend configured", payload["blocked_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

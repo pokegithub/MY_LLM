@@ -2,6 +2,9 @@
 run.py — Master orchestrator for the full SLM pipeline
 
 Usage:
+  python run.py agent-plan     Build a machine-readable agent plan
+  python run.py agent-solve    Run the Phase 1 verified coding-agent solve path
+  python run.py agent-verify   Run the Phase 1 verified coding-agent verification path
   python run.py tokenizer      Train the BPE tokenizer
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
@@ -72,6 +75,11 @@ DEFAULT_SHORT_VALIDATION_REPORT_PATH = os.path.join(
     "run_artifacts",
     "short_real_data_validation_report.json",
 )
+DEFAULT_AGENT_REPORT_ROOT = os.path.join(
+    ".",
+    "run_artifacts",
+    "agent",
+)
 REPORT_PATH = None
 
 
@@ -138,6 +146,9 @@ def apply_runtime_config(
 def check_dependencies(command: str):
     """Check required packages for the selected command."""
     required_by_cmd = {
+        "agent-plan": {},
+        "agent-solve": {},
+        "agent-verify": {},
         "tokenizer": {"tokenizers": "tokenizers", "datasets": "datasets"},
         "download": {"numpy": "numpy", "datasets": "datasets"},
         "download-safe": {"numpy": "numpy", "datasets": "datasets"},
@@ -187,7 +198,8 @@ def check_dependencies(command: str):
 
     for name, pkg in optional.items():
         if not _is_available(pkg):
-            print(f"  TIP: pip install {name}  (for better tokenization)")
+            if not OUTPUT_JSON:
+                print(f"  TIP: pip install {name}  (for better tokenization)")
 
 
 STATUS_TARGETS = [
@@ -368,6 +380,85 @@ def run_deps():
         print("\nDEPENDENCY CHECK FAILED")
         sys.exit(1)
     print("\nDEPENDENCY CHECK PASSED")
+
+
+def _load_task_text(task: str | None, task_file: str | None) -> str:
+    if task and task_file:
+        raise ValueError("provide either --task or --task-file, not both")
+    if task_file:
+        with open(task_file, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    else:
+        text = task or ""
+    if not text.strip():
+        raise ValueError("agent command requires non-empty --task or --task-file")
+    return text
+
+
+def _build_agent_request(args):
+    from agent.types import TaskRequest
+
+    task_text = _load_task_text(args.task, args.task_file)
+    return TaskRequest(
+        task_text=task_text,
+        file_hints=tuple(args.file_hint or ()),
+        checks=tuple(args.check or ()),
+        workspace_root=os.getcwd(),
+        task_file=args.task_file,
+    )
+
+
+def _print_agent_report(title: str, payload: dict):
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+    print(f"  run_id         : {payload['run_id']}")
+    print(f"  route          : {payload['route']['route']}")
+    print(f"  status         : {payload['status']}")
+    print(f"  backend        : {payload['backend_status'].get('kind', 'unknown')}")
+    print(f"  report_path    : {os.path.abspath(payload['report_path'])}")
+    if payload.get("blocked_reason"):
+        print(f"  blocked_reason : {payload['blocked_reason']}")
+    if payload.get("degraded_mode"):
+        print("  degraded_mode  : true")
+    artifact_warnings = payload.get("artifact_warnings") or []
+    if artifact_warnings:
+        print(f"  warnings       : {len(artifact_warnings)} artifact warning(s)")
+    print(f"  quality_claim  : {payload['quality_claim']}")
+    print("=" * 60)
+
+
+def run_agent_plan(args):
+    from agent.orchestrator import plan_task
+
+    payload = plan_task(_build_agent_request(args))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_agent_report("AGENT PLAN", payload)
+
+
+def run_agent_solve(args):
+    from agent.orchestrator import solve_task
+
+    payload = solve_task(
+        _build_agent_request(args),
+        backend_script_path=args.backend_script,
+    )
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_agent_report("AGENT SOLVE", payload)
+
+
+def run_agent_verify(args):
+    from agent.orchestrator import verify_task
+
+    payload = verify_task(_build_agent_request(args))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_agent_report("AGENT VERIFY", payload)
 
 
 def run_hardware_validate():
@@ -1287,6 +1378,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Commands:
+  agent-plan   Build a machine-readable agent plan for one task
+  agent-solve  Run the Phase 1 agent solve path
+  agent-verify Run the Phase 1 agent verification path
   tokenizer    Train the BPE tokenizer
   download     Download and cache training data
     download-safe Download with network-safe defaults
@@ -1320,6 +1414,7 @@ Commands:
     parser.add_argument(
         "command",
         choices=[
+            "agent-plan", "agent-solve", "agent-verify",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
             "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
             "validate-short-run",
@@ -1354,6 +1449,33 @@ Commands:
         default=None,
         help="JSON report path for report-producing validation commands.",
     )
+    parser.add_argument(
+        "--task",
+        default=None,
+        help="Agent task text for agent-plan/agent-solve/agent-verify.",
+    )
+    parser.add_argument(
+        "--task-file",
+        default=None,
+        help="Path to a text file containing the agent task.",
+    )
+    parser.add_argument(
+        "--file-hint",
+        action="append",
+        default=[],
+        help="Relevant file path hint for agent commands. Can be repeated.",
+    )
+    parser.add_argument(
+        "--check",
+        action="append",
+        default=[],
+        help="Structured verifier spec such as compileall:path.py or pytest:tests/test_x.py -q. Can be repeated.",
+    )
+    parser.add_argument(
+        "--backend-script",
+        default=None,
+        help="Path to a scripted candidate JSON file for Phase 1 agent solve.",
+    )
 
     args = parser.parse_args()
 
@@ -1373,6 +1495,9 @@ Commands:
     check_dependencies(args.command)
 
     commands = {
+        "agent-plan": lambda: run_agent_plan(args),
+        "agent-solve": lambda: run_agent_solve(args),
+        "agent-verify": lambda: run_agent_verify(args),
         "tokenizer": run_tokenizer,
         "download": run_download,
         "download-safe": run_download_safe,

@@ -346,6 +346,20 @@ class HardwareProfileSection(_StrictModel):
     active_profile: str
 
 
+class AgentSection(_StrictModel):
+    report_dir: str
+    backend_kind: str
+    backend_script_path: str | None = None
+    max_file_excerpt_chars: int = Field(ge=256)
+    default_retry_budget: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_backend_kind(self):
+        if self.backend_kind not in {"none", "scripted"}:
+            raise ValueError("agent.backend_kind must be one of: none, scripted")
+        return self
+
+
 SECTION_MODELS = {
     "model": ModelSection,
     "train": TrainSection,
@@ -356,6 +370,7 @@ SECTION_MODELS = {
     "distill": DistillSection,
     "quant": QuantSection,
     "hardware_profile": HardwareProfileSection,
+    "agent": AgentSection,
 }
 
 

@@ -694,6 +694,16 @@ class HardwareProfileConfig:
     active_profile: str = "auto"
 
 
+@dataclass
+class AgentConfig:
+    """Configuration for the Phase 1 verified coding-agent surface."""
+    report_dir              : str = "./run_artifacts/agent"
+    backend_kind            : str = "none"
+    backend_script_path     : Optional[str] = None
+    max_file_excerpt_chars  : int = 4000
+    default_retry_budget    : int = 0
+
+
 model_cfg = ModelConfig()
 train_cfg = TrainConfig()
 sft_cfg = SFTConfig()
@@ -703,6 +713,7 @@ eval_cfg = EvalConfig()
 distill_cfg = DistillConfig()
 quant_cfg = QuantConfig()
 hardware_profile_cfg = HardwareProfileConfig()
+agent_cfg = AgentConfig()
 
 
 def _config_targets() -> Dict[str, Any]:
@@ -716,6 +727,7 @@ def _config_targets() -> Dict[str, Any]:
         "distill": distill_cfg,
         "quant": quant_cfg,
         "hardware_profile": hardware_profile_cfg,
+        "agent": agent_cfg,
         # Backward-compatible aliases.
         "model_cfg": model_cfg,
         "train_cfg": train_cfg,
@@ -726,6 +738,7 @@ def _config_targets() -> Dict[str, Any]:
         "distill_cfg": distill_cfg,
         "quant_cfg": quant_cfg,
         "hardware_profile_cfg": hardware_profile_cfg,
+        "agent_cfg": agent_cfg,
     }
 
 
@@ -829,6 +842,7 @@ def runtime_config_dict() -> Dict[str, Dict[str, Any]]:
         "distill": asdict(distill_cfg),
         "quant": asdict(quant_cfg),
         "hardware_profile": asdict(hardware_profile_cfg),
+        "agent": asdict(agent_cfg),
     }
 
 
