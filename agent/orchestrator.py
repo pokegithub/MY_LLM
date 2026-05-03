@@ -1,4 +1,4 @@
-"""Top-level Phase 2 agent orchestration."""
+"""Top-level orchestration for the verified coding agent."""
 
 from __future__ import annotations
 
@@ -367,7 +367,7 @@ def verify_task(request: TaskRequest) -> Dict:
             backend_status={"configured": False, "available": False, "kind": "none"},
             plan=plan,
             context=context,
-            verification=_empty_verification("verification route unsupported in Phase 2"),
+            verification=_empty_verification("verification route unsupported for the current agent command"),
             status=SOLVE_STATUS_UNSUPPORTED,
             files_touched=[],
             blocked_reason=route.reason,
@@ -496,7 +496,7 @@ def solve_task(
             backend_status={"configured": False, "available": False, "kind": "none"},
             plan=plan,
             context=context,
-            verification=_empty_verification("route unsupported in Phase 2"),
+            verification=_empty_verification("route unsupported for the current agent solve path"),
             status=SOLVE_STATUS_UNSUPPORTED,
             files_touched=[],
             blocked_reason=route.reason,

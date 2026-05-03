@@ -13,9 +13,9 @@
 
 ### Last synchronization
 
-- Date: 2026-03-31
-- Scope: Full read-through of all in-repo Python modules (excluding `.venv`).
-- Module count: 61 Python modules.
+- Date: 2026-05-03
+- Scope: Inventory, command-surface, and agent-subsystem synchronization after accepted cleanup through agent Phase 4. This was not a brand-new full-model audit.
+- Module count: 88 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -103,6 +103,7 @@
 ### 1.1 Scanned locations
 
 - Repository root (`*.py`)
+- `agent/`
 - `core/`
 - `engine/`
 - `eval/`
@@ -137,6 +138,24 @@
 - `tokenizer.py`
 - `train.py`
 - `train_tokenizer.py`
+
+#### agent/ (15)
+
+- `agent/__init__.py`
+- `agent/backend.py`
+- `agent/context.py`
+- `agent/critic.py`
+- `agent/exact_tools.py`
+- `agent/exporters.py`
+- `agent/optimize.py`
+- `agent/orchestrator.py`
+- `agent/planner.py`
+- `agent/retrieval.py`
+- `agent/router.py`
+- `agent/trajectory.py`
+- `agent/types.py`
+- `agent/verify.py`
+- `agent/workspace.py`
 
 #### core/ (11)
 
@@ -194,8 +213,12 @@
 
 - `serving/server.py`
 
-#### tests/ (14)
+#### tests/ (18)
 
+- `tests/test_agent_phase1.py`
+- `tests/test_agent_phase2.py`
+- `tests/test_agent_phase3.py`
+- `tests/test_agent_phase4.py`
 - `tests/test_audit_truthfulness.py`
 - `tests/test_cli_truthfulness.py`
 - `tests/test_config_profiles.py`
@@ -225,6 +248,9 @@ Primary architectural planes:
   - Hierarchical file/env ingestion in `core/config_manager.py`
 - Orchestration plane:
   - Command routing and staged workflow in `run.py`
+- Agent plane:
+  - Verified coding-agent subsystem in `agent/*`
+  - Deterministic exact-task routing, bounded repair, trajectory storage, conservative retrieval, and strict export hooks
 - Model plane:
   - Default dense decoder-only GQA transformer in `model.py`
   - Legacy experimental profile gates MoE, memory tokens, recursive loops, MoD routing, and confidence head
@@ -253,6 +279,15 @@ Primary architectural planes:
 
 ### 3.1 Supported commands
 
+- `agent-plan`
+- `agent-solve`
+- `agent-verify`
+- `trajectory-list`
+- `trajectory-show`
+- `trajectory-search`
+- `trajectory-export-sft`
+- `trajectory-export-preferences`
+- `trajectory-export-retrieval`
 - `tokenizer`
 - `download`
 - `download-safe`
@@ -312,6 +347,11 @@ Primary architectural planes:
 - `validate-short-run`: runs a bounded multi-step real-token validation with checkpoint reload/resume and continuation; it is not pretraining
 - `train-preflight`: no-training readiness checks for declared dependency drift, config geometry, tokenizer loadability, local token cache/manifest presence, checkpoint directory expectations, dtype/device compatibility, and parameter-memory lower-bound reporting
 - `deployment-info`: read-only deployment tier metadata and lower-bound memory estimates; does not validate runtime deployment
+- `agent-plan`: writes a machine-readable planning report without claiming solve success
+- `agent-solve`: runs the verified coding-agent solve path, including deterministic exact-task handling, bounded repair attempts, and optional post-green optimization
+- `agent-verify`: runs agent-side verification only and does not fabricate a candidate
+- `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
+- `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `audit`: Pass 1 truthfulness checks covering compile, tokenizer smoke, status health, fake-serving detection, and quantization report integrity
 
 ---

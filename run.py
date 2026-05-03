@@ -1,10 +1,10 @@
 """
-run.py — Master orchestrator for the full SLM pipeline
+run.py - Main command surface for the SLM pipeline and verified coding agent
 
 Usage:
   python run.py agent-plan     Build a machine-readable agent plan
   python run.py agent-solve    Run the verified coding-agent solve path
-  python run.py agent-verify   Run the verified coding-agent verification path
+  python run.py agent-verify   Run the verified coding-agent verify path
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -1579,8 +1579,8 @@ def main():
         epilog="""
 Commands:
   agent-plan   Build a machine-readable agent plan for one task
-  agent-solve  Run the Phase 3 agent solve path
-  agent-verify Run the Phase 3 agent verification path
+  agent-solve  Run the verified coding-agent solve path
+  agent-verify Run the verified coding-agent verify path
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories

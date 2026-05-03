@@ -1,4 +1,4 @@
-"""Deterministic trajectory retrieval for Phase 3 agent memory."""
+"""Deterministic retrieval over stored coding-agent trajectories."""
 
 from __future__ import annotations
 

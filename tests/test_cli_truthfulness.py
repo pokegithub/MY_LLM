@@ -42,6 +42,8 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("external scale comparison disabled/unverified", result.stdout)
         self.assertNotIn("1x/10x/100x comparison report", result.stdout)
+        self.assertIn("Run the verified coding-agent solve path", result.stdout)
+        self.assertIn("Run the verified coding-agent verify path", result.stdout)
 
     def test_deps_json_reports_machine_readable_environment(self):
         result = self.run_command("deps", "--json")

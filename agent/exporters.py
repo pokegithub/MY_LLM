@@ -1,4 +1,4 @@
-"""Truthful Phase 4 trajectory exporters for future learning workflows."""
+"""Truthful trajectory exporters for future learning workflows."""
 
 from __future__ import annotations
 
