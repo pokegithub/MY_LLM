@@ -8,6 +8,9 @@ Usage:
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
+  python run.py trajectory-export-sft Export verified trajectories into SFT-style records
+  python run.py trajectory-export-preferences Export verifier-justified preference pairs
+  python run.py trajectory-export-retrieval Export compact retrieval-ready trajectory records
   python run.py tokenizer      Train the BPE tokenizer
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
@@ -155,6 +158,9 @@ def check_dependencies(command: str):
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
+        "trajectory-export-sft": {},
+        "trajectory-export-preferences": {},
+        "trajectory-export-retrieval": {},
         "tokenizer": {"tokenizers": "tokenizers", "datasets": "datasets"},
         "download": {"numpy": "numpy", "datasets": "datasets"},
         "download-safe": {"numpy": "numpy", "datasets": "datasets"},
@@ -590,6 +596,69 @@ def run_trajectory_search(args):
         _emit_json(payload)
         return
     _print_trajectory_summary("TRAJECTORY SEARCH", payload)
+
+
+def _print_export_summary(title: str, payload: dict):
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+    print(f"  export_type        : {payload['export_type']}")
+    print(f"  record_schema      : {payload['record_schema']}")
+    print(f"  scanned            : {payload['scanned_trajectories']}")
+    print(f"  exported_records   : {payload['exported_records']}")
+    print(f"  skipped            : {payload['skipped_trajectories']}")
+    print(f"  rejected           : {payload['rejected_trajectories']}")
+    print(f"  useful_output      : {payload['useful_output']}")
+    print(f"  output_dir         : {payload['output_dir']}")
+    print(f"  records_path       : {payload['records_path']}")
+    if payload.get("skip_reason_counts"):
+        print(f"  skip_reasons       : {payload['skip_reason_counts']}")
+    if payload.get("reject_reason_counts"):
+        print(f"  reject_reasons     : {payload['reject_reason_counts']}")
+    print(f"  learning_claim     : {payload['learning_claim']}")
+    print("=" * 60)
+
+
+def run_trajectory_export_sft(args):
+    from agent.exporters import export_sft_records
+
+    payload = export_sft_records(
+        run_id=args.run_id,
+        route=args.route_filter,
+        status=args.status_filter,
+    )
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_export_summary("TRAJECTORY EXPORT SFT", payload)
+
+
+def run_trajectory_export_preferences(args):
+    from agent.exporters import export_preference_records
+
+    payload = export_preference_records(
+        run_id=args.run_id,
+        route=args.route_filter,
+        status=args.status_filter,
+    )
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_export_summary("TRAJECTORY EXPORT PREFERENCES", payload)
+
+
+def run_trajectory_export_retrieval(args):
+    from agent.exporters import export_retrieval_records
+
+    payload = export_retrieval_records(
+        run_id=args.run_id,
+        route=args.route_filter,
+        status=args.status_filter,
+    )
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_export_summary("TRAJECTORY EXPORT RETRIEVAL", payload)
 
 
 def run_hardware_validate():
@@ -1515,6 +1584,9 @@ Commands:
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
+  trajectory-export-sft Export verified trajectories into SFT-style records
+  trajectory-export-preferences Export verifier-justified preference pairs
+  trajectory-export-retrieval Export compact retrieval-ready trajectory records
   tokenizer    Train the BPE tokenizer
   download     Download and cache training data
     download-safe Download with network-safe defaults
@@ -1550,6 +1622,7 @@ Commands:
         choices=[
             "agent-plan", "agent-solve", "agent-verify",
             "trajectory-list", "trajectory-show", "trajectory-search",
+            "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
             "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
             "validate-short-run",
@@ -1683,6 +1756,9 @@ Commands:
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),
+        "trajectory-export-sft": lambda: run_trajectory_export_sft(args),
+        "trajectory-export-preferences": lambda: run_trajectory_export_preferences(args),
+        "trajectory-export-retrieval": lambda: run_trajectory_export_retrieval(args),
         "tokenizer": run_tokenizer,
         "download": run_download,
         "download-safe": run_download_safe,

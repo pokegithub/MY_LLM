@@ -75,6 +75,27 @@
 - Retrieval is conservative and deterministic: metadata filters plus simple lexical ranking. It is useful for replay and small context hints, not a semantic memory system.
 - Phase 3 stores and retrieves prior experience only. Exporters, training hooks, preference data generation, and semantic memory remain explicitly deferred to Phase 4.
 
+### Agent Phase 4 update
+
+- Date: 2026-05-03
+- Scope: Added strict trajectory export hooks for future supervised, preference, and retrieval workflows.
+- New export commands:
+  - `trajectory-export-sft`
+  - `trajectory-export-preferences`
+  - `trajectory-export-retrieval`
+- Export artifacts are written under `run_artifacts/agent_exports/<export_run_id>/`.
+- Export record families are versioned:
+  - `agent_sft_export_v1`
+  - `agent_preference_export_v1`
+  - `agent_retrieval_export_v1`
+- Export filtering is strict:
+  - only `verified_success` solve trajectories feed positive SFT export
+  - failed or blocked trajectories never become positive SFT demonstrations
+  - preference pairs are emitted only when verifier evidence supports winner-over-loser ranking
+  - retrieval exports may include verified, failed, blocked, unsupported, and planning-only trajectories, but each is labeled explicitly by outcome type
+- Every exported record carries provenance, schema versioning, and `learning_claim: none`.
+- Phase 4 creates learning hooks only. It does not retrain the model, update weights, add semantic memory, or prove model improvement.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

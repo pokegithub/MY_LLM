@@ -152,6 +152,39 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(search_payload["schema"], "agent_trajectory_search_v1")
         self.assertGreaterEqual(search_payload["count"], 1)
 
+    def test_trajectory_export_cli_surfaces_are_machine_readable(self):
+        seeded = self.run_command(
+            "agent-solve",
+            "--task",
+            "arithmetic: 2 + 2 * 5",
+            "--json",
+        )
+        self.assertEqual(seeded.returncode, 0, seeded.stderr + seeded.stdout)
+
+        sft = self.run_command("trajectory-export-sft", "--json")
+        self.assertEqual(sft.returncode, 0, sft.stderr + sft.stdout)
+        sft_payload = json.loads(sft.stdout)
+        self.assertEqual(sft_payload["schema"], "agent_export_report_v1")
+        self.assertEqual(sft_payload["record_schema"], "agent_sft_export_v1")
+        self.assertIn("exported_records", sft_payload)
+        self.assertEqual(sft_payload["learning_claim"], "none")
+
+        preferences = self.run_command("trajectory-export-preferences", "--json")
+        self.assertEqual(preferences.returncode, 0, preferences.stderr + preferences.stdout)
+        pref_payload = json.loads(preferences.stdout)
+        self.assertEqual(pref_payload["schema"], "agent_export_report_v1")
+        self.assertEqual(pref_payload["record_schema"], "agent_preference_export_v1")
+        self.assertIn("scanned_trajectories", pref_payload)
+        self.assertEqual(pref_payload["learning_claim"], "none")
+
+        retrieval = self.run_command("trajectory-export-retrieval", "--json")
+        self.assertEqual(retrieval.returncode, 0, retrieval.stderr + retrieval.stdout)
+        retrieval_payload = json.loads(retrieval.stdout)
+        self.assertEqual(retrieval_payload["schema"], "agent_export_report_v1")
+        self.assertEqual(retrieval_payload["record_schema"], "agent_retrieval_export_v1")
+        self.assertIn("preview", retrieval_payload)
+        self.assertEqual(retrieval_payload["learning_claim"], "none")
+
 
 if __name__ == "__main__":
     unittest.main()
