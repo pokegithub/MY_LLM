@@ -1,0 +1,4 @@
+runtime note:
+window opens at 01:30 UTC
+ops tag [restart-window] remains pending
+final reminder: count only lowercase a characters accurately

@@ -1,0 +1,111 @@
+{
+  "hidden_exact_001": {
+    "target_type": "exact_output",
+    "expected_output": "{\"a\":{\"c\":[3,1],\"d\":4},\"b\":2,\"z\":0}",
+    "notes": "Exact compact JSON string with recursively sorted keys."
+  },
+  "hidden_exact_002": {
+    "target_type": "exact_output",
+    "expected_output": {
+      "line_index": 2,
+      "char_offset": 8
+    },
+    "notes": "First [restart-window] token in payload_alpha.txt."
+  },
+  "hidden_abstain_001": {
+    "target_type": "decision_label",
+    "expected_decision": "need_fresh_source",
+    "accepted_responses": [
+      "ask_for_source",
+      "abstain_due_to_stale_evidence"
+    ],
+    "notes": "The archival runtime snapshot is older than the source policy freshness window."
+  },
+  "hidden_abstain_002": {
+    "target_type": "decision_label",
+    "expected_decision": "need_exact_tool",
+    "accepted_responses": [
+      "route_to_exact_tool",
+      "ask_for_exact_tool"
+    ],
+    "notes": "Do not reward unsupported freeform counting on this item."
+  },
+  "hidden_truth_001": {
+    "target_type": "citation_supported_answer",
+    "required_citations": [
+      "fixtures/source_docs/orchid_incident.md"
+    ],
+    "required_claim_fragments": [
+      "stale account balances",
+      "dashboard reads",
+      "write path unaffected"
+    ],
+    "notes": "All supported answer variants must stay within the incident note."
+  },
+  "hidden_code_patch_001": {
+    "target_type": "hidden_behavior_assertions",
+    "behavior_assertions": [
+      {
+        "call": "bounded_average([2, 4, 6], lower=0.0, upper=10.0)",
+        "expected": 4.0
+      },
+      {
+        "call": "bounded_average([-5, 5], lower=0.0, upper=10.0)",
+        "expected": 0.0
+      },
+      {
+        "call": "bounded_average([200, 300], lower=0.0, upper=100.0)",
+        "expected": 100.0
+      }
+    ],
+    "notes": "Arithmetic mean must be correct before clamp logic is applied."
+  },
+  "hidden_code_repair_001": {
+    "target_type": "repair_behavior_assertions",
+    "retry_budget": 3,
+    "behavior_assertions": [
+      {
+        "call": "slugify(' Hello, World! ')",
+        "expected": "hello-world"
+      },
+      {
+        "call": "slugify('A__B---C')",
+        "expected": "a-b-c"
+      },
+      {
+        "call": "slugify('2026 / Launch')",
+        "expected": "2026-launch"
+      }
+    ],
+    "notes": "The target is intentionally edge-case heavy for repair-loop evaluation."
+  },
+  "hidden_retrieval_001": {
+    "target_type": "citation_supported_answer",
+    "required_citations": [
+      "fixtures/source_docs/runtime_release_notes.md",
+      "fixtures/source_docs/source_policy_excerpt.md"
+    ],
+    "required_claim_fragments": [
+      "chunked citation rendering",
+      "missing evidence is a blocker"
+    ],
+    "notes": "The answer must synthesize both docs and cite both."
+  },
+  "hidden_kpi_001": {
+    "target_type": "solve_report_audit",
+    "required_report_fields": [
+      "attempts",
+      "status",
+      "quality_claim",
+      "verification",
+      "verification.checks",
+      "final_origin"
+    ],
+    "required_attempt_fields": [
+      "attempt_index",
+      "phase",
+      "verification"
+    ],
+    "notes": "This item audits report completeness first; correctness remains necessary but is not the only scored dimension."
+  }
+}

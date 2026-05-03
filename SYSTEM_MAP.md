@@ -14,8 +14,8 @@
 ### Last synchronization
 
 - Date: 2026-05-03
-- Scope: Inventory, command-surface, and agent-subsystem synchronization after accepted cleanup through agent Phase 4. This was not a brand-new full-model audit.
-- Module count: 88 Python modules.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, and the first private hidden-eval backbone artifact set. This was not a brand-new full-model audit.
+- Module count: 90 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -95,6 +95,16 @@
   - retrieval exports may include verified, failed, blocked, unsupported, and planning-only trajectories, but each is labeled explicitly by outcome type
 - Every exported record carries provenance, schema versioning, and `learning_claim: none`.
 - Phase 4 creates learning hooks only. It does not retrain the model, update weights, add semantic memory, or prove model improvement.
+
+### Phase A hidden eval backbone update
+
+- Date: 2026-05-03
+- Scope: Added the first private hidden-eval backbone artifact set under `evals/hidden/`.
+- `evals/hidden/hidden_eval_spec_v1.md` and `hidden_eval_spec_v1.json` define the decision-oriented private categories for exact symbolic correctness, abstention/tool-or-source choice, source-grounded truthfulness, coding patch success, coding repair-loop success, retrieval-grounded QA, and verifier-loop KPI auditing.
+- `evals/hidden/hidden_eval_seed_set_v1.jsonl` is a small private seed set with explicit frozen vs rotating split metadata, scoring-rule references, required evidence type, and training exclusion flags.
+- `evals/hidden/private/hidden_eval_private_targets_v1.json` stores hidden targets and behavior assertions for private evaluation only; it is not user-facing help text.
+- `evals/hidden/hidden_eval_holdout_hash_registry_v1.json` tracks seed-item hashes, private-target hashes, referenced artifact hashes, split status, and category counts for auditability.
+- `eval_harness/hidden_eval_assets.py` provides narrow integrity loading and validation only. It does not run a bakeoff, score models, or redesign the broader eval harness.
 
 ---
 
@@ -181,10 +191,11 @@
 - `eval/__init__.py`
 - `eval/benchmark_harness.py`
 
-#### eval_harness/ (5)
+#### eval_harness/ (6)
 
 - `eval_harness/__init__.py`
 - `eval_harness/contamination_checks.py`
+- `eval_harness/hidden_eval_assets.py`
 - `eval_harness/manifests.py`
 - `eval_harness/runner.py`
 - `eval_harness/statistical_tests.py`
@@ -213,7 +224,7 @@
 
 - `serving/server.py`
 
-#### tests/ (18)
+#### tests/ (19)
 
 - `tests/test_agent_phase1.py`
 - `tests/test_agent_phase2.py`
@@ -227,6 +238,7 @@
 - `tests/test_data_token_truthfulness.py`
 - `tests/test_deployment_profiles.py`
 - `tests/test_eval_integrity.py`
+- `tests/test_hidden_eval_assets.py`
 - `tests/test_hard_evidence.py`
 - `tests/test_kv_cache.py`
 - `tests/test_model_shapes.py`

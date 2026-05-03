@@ -1,0 +1,181 @@
+{
+  "schema": "hidden_eval_holdout_hash_registry_v1",
+  "seed_schema": "hidden_eval_seed_set_v1",
+  "version": "v1",
+  "hash_input_version": "canonical_json_v1",
+  "items": [
+    {
+      "id": "hidden_exact_001",
+      "category": "exact_symbolic_correctness",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "193491efc2253795f080d984119838ea31b8870773070a095806951942a08917",
+      "private_target_ref": "hidden_exact_001",
+      "private_target_sha256": "083e2a7ce14f9cf5ac5fdbf117bcd11a9995440557582a345126ebbb5b5e5762",
+      "artifact_hashes": [],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_exact_002",
+      "category": "exact_symbolic_correctness",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "80e4b3687d254aa139bb27b3dfef06401f57a0695bb65635440d21e74abf7c16",
+      "private_target_ref": "hidden_exact_002",
+      "private_target_sha256": "07aeef21fbd276d88fee2dc6720931b5587be15bcd50148bcc1ac7d4b94c6928",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/exact/payload_alpha.txt",
+          "sha256": "66ec258ffe95fafaf9754281c813c7cb999c9a08f7e49b6f45d9130eb8b62838"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_abstain_001",
+      "category": "abstention_need_tool_need_source",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "dfe1b7a375eca2c2e79f403dd5657568e92d5a698b6c50ec1407cf5172d84f68",
+      "private_target_ref": "hidden_abstain_001",
+      "private_target_sha256": "0d40c6d99bc24d358721cb14d2c2083e3ce62cc770b689ab06012cbe9fa1692d",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/source_policy_excerpt.md",
+          "sha256": "6a46dea86f8226f63fd7ed2aa52fef7e94e32e010eace0c204172e21b62eef03"
+        },
+        {
+          "path": "fixtures/source_docs/stale_runtime_snapshot.md",
+          "sha256": "c825014a3b168832b2d326abceb50f694505e1c84789808dc565f3de23ea719c"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_abstain_002",
+      "category": "abstention_need_tool_need_source",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "b753e40c636b4673ad19584ff536a9d49443e02773a3bb2dd66549a434014a8d",
+      "private_target_ref": "hidden_abstain_002",
+      "private_target_sha256": "1644ff441eaffa3dd056f5c60ed361247295d65de39723720b89bb809c084084",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/exact/payload_alpha.txt",
+          "sha256": "66ec258ffe95fafaf9754281c813c7cb999c9a08f7e49b6f45d9130eb8b62838"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_truth_001",
+      "category": "source_grounded_truthfulness",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "b743f93fc583ed676c6bb198a6ef79d26a1c66a4446f827ac10e0bec26ae85ce",
+      "private_target_ref": "hidden_truth_001",
+      "private_target_sha256": "256ee4ddd33907729e256efb8205247eb7d2bad7e6a558474c54e7bdf9561487",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/orchid_incident.md",
+          "sha256": "4fa82304a3412dd6addee0a8bfa07d16449693211251dc17b7728fab56cd844a"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_code_patch_001",
+      "category": "coding_patch_success",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "f54868e2f810ecf02da3a65d9724c10f419f00b1efeeb3b6664ed17b186322c4",
+      "private_target_ref": "hidden_code_patch_001",
+      "private_target_sha256": "ca9abfd3999a77c2283761f0427bbf9c35dde84c241b81f7a86f56c9ca1dbc85",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/coding_patch/math_ops.py",
+          "sha256": "2cc676bb7c3b0c3d4b8c08e318be6c6a23eb657b9495054721ef13b09a16bf32"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_code_repair_001",
+      "category": "coding_repair_loop_success",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "ab2069eccb29600e2a9bc65628c48182b89596e074e8ac598cd4fc64466d8886",
+      "private_target_ref": "hidden_code_repair_001",
+      "private_target_sha256": "238d137e809bc05aac9b6ad1748a106c1ce46ba87dc52ecc47b777ca05ad3d54",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/coding_repair/slug_tools.py",
+          "sha256": "d06ba4c5fcccee73fe27a929b0122befbf114525364869a6bce27968f43478c5"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_001",
+      "category": "retrieval_grounded_qa",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "d6a1a184e1fb063f868899596943aade09b28beeacaec9e12b5cf5b84fd4199f",
+      "private_target_ref": "hidden_retrieval_001",
+      "private_target_sha256": "727e2bb853bfca7053d0678c124cda50dd65b50dd60e23b6ed7484d60303f2d0",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/runtime_release_notes.md",
+          "sha256": "8d9a0b34f29b68a0eb2ccd42ff4b1a26b8928441e320f3b0abdfe1362ac7b309"
+        },
+        {
+          "path": "fixtures/source_docs/source_policy_excerpt.md",
+          "sha256": "6a46dea86f8226f63fd7ed2aa52fef7e94e32e010eace0c204172e21b62eef03"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_kpi_001",
+      "category": "verifier_loop_kpis_latency_cost",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "2e6ba187f8d7540fa7002fe16af4fe0ecfd81ca9acfdb4abe4bc36feb2890cd2",
+      "private_target_ref": "hidden_kpi_001",
+      "private_target_sha256": "25dc94f5d6df145c28a38083d4c047c3584e68634abf0e8f8a96e5dcbc5d9bc5",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/coding_repair/slug_tools.py",
+          "sha256": "d06ba4c5fcccee73fe27a929b0122befbf114525364869a6bce27968f43478c5"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    }
+  ],
+  "split_summary": {
+    "frozen": 4,
+    "rotating": 5
+  },
+  "category_summary": {
+    "exact_symbolic_correctness": 2,
+    "abstention_need_tool_need_source": 2,
+    "source_grounded_truthfulness": 1,
+    "coding_patch_success": 1,
+    "coding_repair_loop_success": 1,
+    "retrieval_grounded_qa": 1,
+    "verifier_loop_kpis_latency_cost": 1
+  },
+  "registry_notes": [
+    "All hidden eval items must remain excluded from training, export, and normal retrieval corpora.",
+    "Rotating items may be refreshed later, but retired hashes must remain auditable."
+  ]
+}

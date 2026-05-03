@@ -1,0 +1,205 @@
+{
+  "schema": "hidden_eval_spec_v1",
+  "version": "v1",
+  "decision_purpose": "private_hidden_eval_backbone_for_phase_a",
+  "principles": [
+    "Do not use hidden eval artifacts as training or export inputs.",
+    "Prefer exact or structured scoring whenever possible.",
+    "Keep frozen and rotating splits explicit and auditable.",
+    "Treat unsupported confident answers as failures when the task requires a tool, source, or abstention.",
+    "Do not report public benchmark prestige from this artifact set."
+  ],
+  "categories": {
+    "exact_symbolic_correctness": {
+      "purpose": "Measure exact deterministic correctness and exact-tool routing.",
+      "success": "Exact output or exact file lookup matches the hidden target.",
+      "failure": "Wrong exact output, unsupported guessing, or missing exact evidence.",
+      "scoring": "exact",
+      "required_evidence": [
+        "exact_output"
+      ],
+      "hidden_material": [
+        "expected_output",
+        "file_position_target"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "track_by_hash_registry"
+      ],
+      "not_yet_measured": [
+        "reasoning_style",
+        "public_benchmark_rank",
+        "long_context_behavior"
+      ]
+    },
+    "abstention_need_tool_need_source": {
+      "purpose": "Measure whether the system asks for a tool, asks for a source, or abstains when evidence is insufficient.",
+      "success": "Correct abstain / need-tool / need-source decision with no unsupported confident answer.",
+      "failure": "Guessing, unsupported certainty, or answering freshness-sensitive questions from stale evidence.",
+      "scoring": "structured_label",
+      "required_evidence": [
+        "abstention_or_tool_request"
+      ],
+      "hidden_material": [
+        "expected_decision_label",
+        "freshness_trigger"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "rotate_through_registry"
+      ],
+      "not_yet_measured": [
+        "phrasing_style",
+        "verbosity_preference"
+      ]
+    },
+    "source_grounded_truthfulness": {
+      "purpose": "Measure evidence-grounded answering from provided sources.",
+      "success": "Answer matches supported claims and cites the required source.",
+      "failure": "Unsupported claim, contradiction, or missing citation.",
+      "scoring": "structured_claim_check",
+      "required_evidence": [
+        "citation_bundle"
+      ],
+      "hidden_material": [
+        "accepted_claim_fragments",
+        "required_citations"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "track_source_hashes"
+      ],
+      "not_yet_measured": [
+        "general_world_knowledge",
+        "style_quality"
+      ]
+    },
+    "coding_patch_success": {
+      "purpose": "Measure one-pass patch correctness on a small hidden behavior target.",
+      "success": "Patch satisfies all hidden behavior assertions with a narrow diff.",
+      "failure": "Verifier failure, wrong behavior, or broad unrelated rewrite.",
+      "scoring": "hidden_behavior_assertions",
+      "required_evidence": [
+        "hidden_behavior_report"
+      ],
+      "hidden_material": [
+        "behavior_assertions",
+        "edge_case_outputs"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "track_fixture_hashes"
+      ],
+      "not_yet_measured": [
+        "large_refactor_quality",
+        "public_pass_at_k"
+      ]
+    },
+    "coding_repair_loop_success": {
+      "purpose": "Measure whether the bounded repair loop reaches a verified fix within budget.",
+      "success": "Final repair passes hidden assertions within the retry budget.",
+      "failure": "Retry exhaustion, regression, or unverifiable patch.",
+      "scoring": "repair_within_budget",
+      "required_evidence": [
+        "repair_report"
+      ],
+      "hidden_material": [
+        "repair_edge_cases",
+        "retry_budget_target"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "rotate_through_registry"
+      ],
+      "not_yet_measured": [
+        "multi_candidate_search_quality",
+        "rl_exploration_quality"
+      ]
+    },
+    "retrieval_grounded_qa": {
+      "purpose": "Measure multi-document answering with citations and evidence discipline.",
+      "success": "Answer is supported by the required docs and includes the expected citations.",
+      "failure": "Uncited answer, unsupported synthesis, or failure to acknowledge missing evidence.",
+      "scoring": "supported_answer_with_citations",
+      "required_evidence": [
+        "citation_bundle"
+      ],
+      "hidden_material": [
+        "required_document_set",
+        "accepted_synthesis"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "track_doc_hashes"
+      ],
+      "not_yet_measured": [
+        "web_search_quality",
+        "semantic_retrieval_at_scale"
+      ]
+    },
+    "verifier_loop_kpis_latency_cost": {
+      "purpose": "Measure whether solve reports expose enough operational evidence for honest comparison.",
+      "success": "Solve report includes required attempt, verification, latency, and per-check evidence fields.",
+      "failure": "Missing report fields, unverifiable cost claims, or green status without verifier evidence.",
+      "scoring": "structured_report_audit",
+      "required_evidence": [
+        "solve_report_metrics"
+      ],
+      "hidden_material": [
+        "required_report_fields",
+        "bounded_expectations"
+      ],
+      "contamination_controls": [
+        "exclude_from_training",
+        "exclude_from_exports",
+        "track_by_hash_registry"
+      ],
+      "not_yet_measured": [
+        "cluster_scale_throughput",
+        "production_cost_optimization"
+      ]
+    }
+  },
+  "scoring_rules": {
+    "exact_match_only": {
+      "kind": "exact",
+      "description": "Pass only when the final exact output matches the private target exactly."
+    },
+    "decision_label_only": {
+      "kind": "structured_label",
+      "description": "Pass only when the decision label matches the private target and no unsupported confident answer is given."
+    },
+    "citation_supported_answer": {
+      "kind": "citation_bundle",
+      "description": "Pass only when the answer stays within accepted supported claims and cites the required source or sources."
+    },
+    "hidden_behavior_all_assertions_pass": {
+      "kind": "hidden_behavior",
+      "description": "Pass only when all hidden behavior assertions pass."
+    },
+    "repair_within_budget_and_assertions_pass": {
+      "kind": "repair_behavior",
+      "description": "Pass only when the final repaired result passes all hidden assertions within the retry budget."
+    },
+    "operational_trace_present": {
+      "kind": "report_audit",
+      "description": "Pass only when the solve report exposes the required attempt, verifier, latency, and timing fields."
+    }
+  },
+  "holdout_policy": {
+    "split_names": [
+      "frozen",
+      "rotating"
+    ],
+    "frozen_rule": "Anchor items remain stable until an explicit version bump or retirement event.",
+    "rotating_rule": "Rotating items may be refreshed later, but the old content hash must remain in the registry for auditability.",
+    "training_exclusion_required": true,
+    "export_exclusion_required": true
+  }
+}
