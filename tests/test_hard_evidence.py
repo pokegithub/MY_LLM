@@ -164,12 +164,13 @@ class DataGovernanceEvidenceTests(unittest.TestCase):
 
         self.assertEqual(report["schema"], "dataset_source_governance_v1")
         self.assertGreater(report["source_count"], 0)
-        self.assertEqual(report["known_license_count"], 0)
+        self.assertEqual(report["known_license_count"], 4)
         self.assertEqual(report["legal_clearance_claim"], "none")
         self.assertIn("needs_manual_review", report["governance_classification_counts"])
         self.assertIn("excluded_from_training", report["governance_classification_counts"])
-        self.assertTrue(
-            all(item["license_status"] == "unknown" for item in report["sources"])
+        self.assertGreaterEqual(
+            sum(1 for item in report["sources"] if item["license_status"] == "known_but_unreviewed"),
+            4,
         )
         self.assertTrue(
             all(item["legal_clearance_claim"] == "none" for item in report["sources"])

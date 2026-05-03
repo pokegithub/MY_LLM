@@ -40,7 +40,7 @@
 - `hardware-validate` reports current-machine CUDA/device/dtype evidence and runs only the strongest safe narrow validation available. It distinguishes system GPU visibility through `nvidia-smi` from actual PyTorch CUDA usability; CPU-only or system-GPU-only evidence does not prove GPU readiness.
 - `gpu-fit-validate` reports a bounded RTX 2050/4GB constrained-fit matrix through the repo-local `.venv` interpreter. Passing reduced configs classifies the hardware as validation-only for the current repo target, not pretraining-ready.
 - `data-governance` emits source registry/category evidence, license-status evidence, exact token-chunk duplicate evidence with explicit scan coverage, bounded train/validation exact-overlap evidence, and source-level benchmark-risk evidence. It does not claim legal clearance, near-deduplication, semantic deduplication, or content contamination detection.
-- `data_governance/source_license_metadata.json` is a manual repo-side source governance layer. It documents current review status, repo policy status, and training blocker level only; it is not legal advice, not legal clearance, and currently leaves all declared licenses as `unknown`.
+- `data_governance/source_license_metadata.json` is a manual repo-side source governance layer. It documents current review status, repo policy status, and training blocker level only; it is not legal advice and not legal clearance. Most declared licenses remain `unknown`; a tiny manually reviewed subset now has documented license metadata without changing `legal_clearance_claim`.
 - `validate-short-run` runs a bounded multi-step real-token train/resume/checkpoint/eval-gate validation path. It is not pretraining and makes no model-quality claim.
 - Real pretraining readiness remains controlled by `train-preflight`; validation reports do not override preflight.
 
@@ -105,6 +105,15 @@
 - `evals/hidden/private/hidden_eval_private_targets_v1.json` stores hidden targets and behavior assertions for private evaluation only; it is not user-facing help text.
 - `evals/hidden/hidden_eval_holdout_hash_registry_v1.json` tracks seed-item hashes, private-target hashes, referenced artifact hashes, split status, and category counts for auditability.
 - `eval_harness/hidden_eval_assets.py` provides narrow integrity loading and validation only. It does not run a bakeoff, score models, or redesign the broader eval harness.
+
+### Phase A governance training-readiness update
+
+- Date: 2026-05-03
+- Scope: Added a manual source review template, a tiny repo-policy-allowed subset manifest, and an explicit benchmark holdout policy for future post-training readiness.
+- `data_governance/source_review_template_v1.md` separates documented metadata, repo policy, training-readiness intent, and legal-safety limits.
+- `data_governance/allowed_corpus_manifest_v1.json` is intentionally tiny and currently permits only a narrow repo-policy allowance where the repo has documented evidence strong enough to do so honestly.
+- `data_governance/benchmark_holdout_policy_v1.md` ties configured benchmark exclusions and hidden-eval assets to training exclusion rules.
+- This package does not provide legal clearance. `legal_clearance_claim` remains `none`, and most configured sources remain blocked or excluded.
 
 ---
 
@@ -755,10 +764,10 @@ truthfully; many active sources remain `needs_manual_review`.
 ### 8.2.1 Manual source-license metadata
 
 - `data_governance/source_license_metadata.json` contains one record per configured source.
-- The metadata tracks source category/domain, declared license string when manually documented, license evidence source, review basis, governance classification, repo policy status, training blocker level, notes, and `legal_clearance_claim`.
+- The metadata tracks source category/domain, declared license string when manually documented, license evidence source, review basis, benchmark-risk status, governance classification, repo policy status, training blocker level, intended training role, notes, and `legal_clearance_claim`.
 - `legal_clearance_claim` must remain `none`; `allowed_by_repo_policy` is not legal approval.
-- Current metadata is complete for source coverage but not license clearance: all declared licenses remain `unknown` until a real manual source-page or dataset-card review is recorded.
-- Current triage is intentionally conservative: unknown-license active sources are `blocked_pending_review` and `hard_blocker`; configured benchmark sources are `excluded` and `hard_blocker`.
+- Current metadata is complete for source coverage but still highly restrictive for training readiness. Most declared licenses remain `unknown`, and only a tiny manually reviewed subset has documented license metadata.
+- Current triage remains intentionally conservative: most active sources stay `blocked_pending_review` and `hard_blocker`; configured benchmark sources are `excluded` and `hard_blocker`; any repo-policy allowance remains narrow and not legally cleared.
 
 ### 8.3 Mixed dataset runtime phases
 

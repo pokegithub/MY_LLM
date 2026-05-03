@@ -1,0 +1,79 @@
+{
+  "schema": "allowed_corpus_manifest_v1",
+  "version": "v1",
+  "manifest_purpose": "Tiny repo-policy-allowed subset for limited future post-training experiments. This is not legal clearance and not a full approved corpus.",
+  "legal_clearance_claim": "none",
+  "scope_note": "This manifest is intentionally tiny. It captures only the strongest honest repo-policy allowance currently supported by manual review evidence.",
+  "reviewed_candidate_source_count": 4,
+  "reviewed_candidates": [
+    {
+      "source_id": "wikimedia/wikipedia",
+      "subset": "20231101.en",
+      "repo_policy_status": "blocked_pending_review",
+      "intended_training_role": "pending_review_only",
+      "benchmark_risk_status": "not_flagged",
+      "rationale_summary": "Documented mixed text licensing exists, but attribution/share-alike scope and additional-term complexity keep this blocked for now."
+    },
+    {
+      "source_id": "HuggingFaceH4/ultrachat_200k",
+      "subset": null,
+      "repo_policy_status": "blocked_pending_review",
+      "intended_training_role": "pending_review_only",
+      "benchmark_risk_status": "not_flagged",
+      "rationale_summary": "Dataset card documents an MIT tag, but upstream ChatGPT-generated synthetic provenance remains unresolved for repo-policy allowance."
+    },
+    {
+      "source_id": "Open-Orca/SlimOrca",
+      "subset": null,
+      "repo_policy_status": "blocked_pending_review",
+      "intended_training_role": "pending_review_only",
+      "benchmark_risk_status": "benchmark_adjacent_needs_review",
+      "rationale_summary": "Dataset card documents an MIT tag, but GPT-4-augmented FLAN reasoning-trace provenance remains unresolved for repo-policy allowance."
+    },
+    {
+      "source_id": "Anthropic/hh-rlhf",
+      "subset": null,
+      "repo_policy_status": "allowed_by_repo_policy",
+      "intended_training_role": "preference_optimization_only",
+      "benchmark_risk_status": "not_flagged",
+      "rationale_summary": "Repo-policy allowed only for limited preference-style post-training experiments. It is not allowed here as general dialogue SFT."
+    }
+  ],
+  "allowed_source_count": 1,
+  "allowed_sources": [
+    {
+      "source_id": "Anthropic/hh-rlhf",
+      "subset": null,
+      "dataset_splits": [
+        "train"
+      ],
+      "repo_policy_status": "allowed_by_repo_policy",
+      "intended_training_role": "preference_optimization_only",
+      "declared_license": "mit",
+      "license_evidence_source": "manual_dataset_card_metadata",
+      "benchmark_risk_status": "not_flagged",
+      "provenance_references": [
+        "https://huggingface.co/datasets/Anthropic/hh-rlhf"
+      ],
+      "policy_notes": [
+        "Repo-policy allowed only for limited future preference-style post-training experiments.",
+        "This does not imply legal clearance.",
+        "Dataset-card guidance says the data are not meant for supervised training of dialogue agents."
+      ]
+    }
+  ],
+  "configured_benchmark_exclusion_sources": [
+    "truthful_qa",
+    "google/boolq",
+    "allenai/ai2_arc",
+    "winogrande",
+    "openai/gsm8k"
+  ],
+  "hidden_eval_training_exclusion_reference": "evals/hidden/hidden_eval_holdout_hash_registry_v1.json",
+  "source_review_reference": "data_governance/source_license_metadata.json",
+  "policy_notes": [
+    "An extremely small allowed subset is acceptable at this stage.",
+    "This manifest is a repo-policy training-readiness artifact, not a legal approval artifact.",
+    "Anything not listed in allowed_sources remains blocked, excluded, or otherwise not approved by this manifest."
+  ]
+}

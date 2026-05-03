@@ -9,6 +9,7 @@ from download_data import (
     build_dataset_source_manifest,
     build_exact_chunk_dedup_report,
     config_hash,
+    load_allowed_corpus_manifest,
     load_manual_source_license_metadata,
     reconstruct_token_artifact_manifest,
     token_artifact_record,
@@ -184,17 +185,21 @@ class DataGovernanceReportTests(unittest.TestCase):
         self.assertEqual(report["legal_clearance_claim"], "none")
         self.assertEqual(report["manual_metadata"]["matched_source_count"], report["source_count"])
         self.assertEqual(report["manual_metadata"]["coverage_ratio"], 1.0)
-        self.assertEqual(report["known_license_count"], 0)
-        self.assertEqual(report["documented_license_count"], 0)
+        self.assertEqual(report["known_license_count"], 4)
+        self.assertEqual(report["documented_license_count"], 4)
         self.assertGreater(report["unknown_license_count"], 0)
-        self.assertEqual(report["declared_license_counts"], {"unknown": report["source_count"]})
+        self.assertEqual(report["unknown_license_count"], 25)
+        self.assertEqual(report["repo_policy_status_counts"]["blocked_pending_review"], 23)
+        self.assertEqual(report["repo_policy_status_counts"]["excluded"], 5)
+        self.assertEqual(report["repo_policy_status_counts"]["allowed_by_repo_policy"], 1)
+        self.assertEqual(
+            report["training_blocker_level_counts"],
+            {"caution": 1, "hard_blocker": 28},
+        )
+        self.assertEqual(report["active_hard_blocker_count"], 23)
+        self.assertEqual(len(report["allowed_by_repo_policy_sources"]), 1)
         self.assertIn("source_category_counts", report)
         self.assertIn("repo_policy_status_counts", report)
-        self.assertEqual(report["repo_policy_status_counts"]["blocked_pending_review"], 24)
-        self.assertEqual(report["repo_policy_status_counts"]["excluded"], 5)
-        self.assertEqual(report["training_blocker_level_counts"], {"hard_blocker": 29})
-        self.assertEqual(report["active_hard_blocker_count"], 24)
-        self.assertEqual(report["allowed_by_repo_policy_sources"], [])
         self.assertTrue(report["serious_training_blocked_by_policy"])
         for item in report["sources"]:
             self.assertIn(
@@ -258,14 +263,24 @@ class DataGovernanceReportTests(unittest.TestCase):
             if item["active_in_current_config"]
         ]
         self.assertEqual(len(active_sources), 24)
+        allowed = [
+            item for item in active_sources
+            if item["repo_policy_status"] == "allowed_by_repo_policy"
+        ]
+        self.assertEqual(len(allowed), 1)
+        self.assertEqual(allowed[0]["source"], "Anthropic/hh-rlhf")
+        self.assertEqual(allowed[0]["training_blocker_level"], "caution")
+        self.assertEqual(allowed[0]["legal_clearance_claim"], "none")
+        blocked = [
+            item for item in active_sources
+            if item["repo_policy_status"] == "blocked_pending_review"
+        ]
+        self.assertEqual(len(blocked), 23)
         self.assertTrue(
-            all(item["repo_policy_status"] == "blocked_pending_review" for item in active_sources)
+            all(item["training_blocker_level"] == "hard_blocker" for item in blocked)
         )
-        self.assertTrue(
-            all(item["training_blocker_level"] == "hard_blocker" for item in active_sources)
-        )
-        self.assertFalse(report["allowed_by_repo_policy_sources"])
-        self.assertEqual(len(report["hard_blockers"]), report["source_count"])
+        self.assertEqual(len(report["allowed_by_repo_policy_sources"]), 1)
+        self.assertEqual(len(report["hard_blockers"]), 28)
 
     def test_allowed_by_repo_policy_is_not_legal_clearance(self):
         with tempfile.TemporaryDirectory() as td:
@@ -311,6 +326,65 @@ class DataGovernanceReportTests(unittest.TestCase):
         self.assertEqual(first["training_blocker_level"], "caution")
         self.assertEqual(first["legal_clearance_claim"], "none")
         self.assertEqual(report["legal_clearance_claim"], "none")
+
+    def test_allowed_corpus_manifest_contains_only_policy_allowed_sources(self):
+        manifest = load_allowed_corpus_manifest()
+
+        self.assertTrue(manifest["ok"])
+        self.assertEqual(manifest["legal_clearance_claim"], "none")
+        self.assertEqual(manifest["reviewed_candidate_source_count"], 4)
+        self.assertEqual(manifest["allowed_source_count"], 1)
+        allowed = manifest["allowed_sources"][0]
+        self.assertEqual(allowed["source_id"], "Anthropic/hh-rlhf")
+
+        source_manifest = build_dataset_source_manifest()
+        allowed_keys = {
+            (item["source"], item["subset"])
+            for item in source_manifest["sources"]
+            if item["repo_policy_status"] == "allowed_by_repo_policy"
+        }
+        manifest_keys = {
+            (item["source_id"], item.get("subset"))
+            for item in manifest["allowed_sources"]
+        }
+        self.assertEqual(manifest_keys, allowed_keys)
+
+    def test_blocked_reviewed_candidates_do_not_leak_into_allowed_manifest(self):
+        manifest = load_allowed_corpus_manifest()
+        blocked_ids = {
+            item["source_id"]
+            for item in manifest["reviewed_candidates"]
+            if item["repo_policy_status"] != "allowed_by_repo_policy"
+        }
+        allowed_ids = {item["source_id"] for item in manifest["allowed_sources"]}
+        self.assertFalse(blocked_ids & allowed_ids)
+
+    def test_governance_artifacts_preserve_cautionary_language(self):
+        with open(
+            "./data_governance/allowed_corpus_manifest_v1.json",
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            manifest_text = handle.read()
+        with open(
+            "./data_governance/benchmark_holdout_policy_v1.md",
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            policy_text = handle.read()
+        with open(
+            "./data_governance/source_review_template_v1.md",
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            template_text = handle.read()
+
+        combined = "\n".join([manifest_text, policy_text, template_text]).lower()
+        self.assertIn("legal_clearance_claim", template_text)
+        self.assertIn("none", template_text)
+        self.assertIn("evals/hidden", policy_text)
+        self.assertNotIn("legally cleared", manifest_text.lower())
+        self.assertIn("not legal clearance", manifest_text.lower())
 
     def test_exact_dedup_scope_fields_do_not_claim_near_dedup(self):
         with tempfile.TemporaryDirectory() as td:

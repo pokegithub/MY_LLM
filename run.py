@@ -797,6 +797,7 @@ def run_data_governance():
         return
 
     source_manifest = report["source_manifest"]
+    allowed_manifest = report.get("allowed_corpus_manifest", {})
     dedup = report["exact_dedup"]
     benchmark_risk = report["benchmark_source_risk"]
     summary = report.get("summary", {})
@@ -814,6 +815,9 @@ def run_data_governance():
     print(f"  blocker_counts        : {source_manifest.get('training_blocker_level_counts', {})}")
     print(f"  active_hard_blockers  : {source_manifest.get('active_hard_blocker_count', 'unknown')}")
     print(f"  allowed_by_policy     : {len(source_manifest.get('allowed_by_repo_policy_sources', []))}")
+    print(f"  reviewed_candidates   : {allowed_manifest.get('reviewed_candidate_source_count', 0)}")
+    print(f"  allowed_manifest_ok   : {allowed_manifest.get('ok', False)}")
+    print(f"  allowed_manifest_size : {allowed_manifest.get('allowed_source_count', 0)}")
     print(f"  policy_blocks_training: {source_manifest.get('serious_training_blocked_by_policy', True)}")
     print(f"  license_counts        : {source_manifest.get('declared_license_counts', {})}")
     print(f"  governance_counts     : {source_manifest.get('governance_classification_counts', {})}")

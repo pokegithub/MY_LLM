@@ -38,6 +38,9 @@ TOKEN_ARTIFACT_MANIFEST_PATH = os.path.join(
 SOURCE_LICENSE_METADATA_PATH = os.path.join(
     ".", "data_governance", "source_license_metadata.json"
 )
+ALLOWED_CORPUS_MANIFEST_PATH = os.path.join(
+    ".", "data_governance", "allowed_corpus_manifest_v1.json"
+)
 NETWORK_SAFE_FLAKY_SOURCES = {
     "HuggingFaceTB/smollm-corpus",
     "codeparrot/github-code",
@@ -560,7 +563,13 @@ def validate_token_artifact_manifest(
 
 
 MANUAL_LICENSE_ALLOWED = {
-    "license_evidence_source": {"manual_repo_metadata", "unknown"},
+    "license_evidence_source": {
+        "manual_repo_metadata",
+        "manual_dataset_card_metadata",
+        "manual_upstream_legal_page",
+        "manual_dataset_card_and_upstream_legal_page",
+        "unknown",
+    },
     "review_basis": {
         "not_reviewed",
         "manual_source_page_review",
@@ -582,6 +591,18 @@ MANUAL_LICENSE_ALLOWED = {
         "restricted",
     },
     "training_blocker_level": {"hard_blocker", "caution", "informational"},
+    "benchmark_risk_status": {
+        "not_flagged",
+        "benchmark_excluded",
+        "benchmark_adjacent_needs_review",
+    },
+    "intended_training_role": {
+        "none",
+        "pending_review_only",
+        "reference_only",
+        "instruction_sft_candidate",
+        "preference_optimization_only",
+    },
     "legal_clearance_claim": {"none"},
 }
 
@@ -655,6 +676,14 @@ def load_manual_source_license_metadata(
             "training_blocker_level": str(
                 raw.get("training_blocker_level", "hard_blocker") or "hard_blocker"
             ),
+            "benchmark_risk_status": str(
+                raw.get("benchmark_risk_status", "not_flagged") or "not_flagged"
+            ),
+            "intended_training_role": str(
+                raw.get("intended_training_role", "none") or "none"
+            ),
+            "provenance_evidence": raw.get("provenance_evidence", []),
+            "exclusion_rationale": str(raw.get("exclusion_rationale", "")),
             "notes": str(raw.get("notes", "")),
             "legal_clearance_claim": str(
                 raw.get("legal_clearance_claim", "none") or "none"
@@ -670,6 +699,14 @@ def load_manual_source_license_metadata(
             report["errors"].append(
                 f"record[{index}] documents a license without evidence source"
             )
+        if not isinstance(record["provenance_evidence"], list):
+            report["errors"].append(
+                f"record[{index}] provenance_evidence must be a list"
+            )
+        elif not all(isinstance(item, str) and item.strip() for item in record["provenance_evidence"]):
+            report["errors"].append(
+                f"record[{index}] provenance_evidence must contain non-empty strings"
+            )
         key = _source_metadata_key(source_id, subset)
         if key in report["records_by_key"]:
             report["errors"].append(f"duplicate metadata record for {key}")
@@ -679,6 +716,131 @@ def load_manual_source_license_metadata(
     report["records"] = normalized_records
     report["record_count"] = len(normalized_records)
     report["ok"] = not report["errors"] and report["record_count"] > 0
+    return report
+
+
+def load_allowed_corpus_manifest(
+    manifest_path: str = ALLOWED_CORPUS_MANIFEST_PATH,
+    *,
+    metadata_path: str = SOURCE_LICENSE_METADATA_PATH,
+) -> dict:
+    """Load the tiny repo-policy-allowed subset without implying legal clearance."""
+    report = {
+        "schema": "allowed_corpus_manifest_load_v1",
+        "path": manifest_path,
+        "exists": os.path.isfile(manifest_path),
+        "ok": False,
+        "allowed_source_count": 0,
+        "reviewed_candidate_source_count": 0,
+        "allowed_sources": [],
+        "reviewed_candidates": [],
+        "errors": [],
+        "legal_clearance_claim": "none",
+    }
+    if not report["exists"]:
+        report["errors"].append("allowed corpus manifest is missing")
+        return report
+
+    try:
+        payload = safe_load_json(
+            manifest_path,
+            max_bytes=2_000_000,
+            allowed_roots=get_allowed_data_roots(),
+        )
+    except (ValidationError, OSError, ValueError) as exc:
+        report["errors"].append(f"allowed_corpus_manifest_load_failed: {exc}")
+        return report
+
+    if not isinstance(payload, dict):
+        report["errors"].append("allowed corpus manifest payload is not an object")
+        return report
+    if payload.get("schema") != "allowed_corpus_manifest_v1":
+        report["errors"].append("allowed corpus manifest schema must be allowed_corpus_manifest_v1")
+    if payload.get("legal_clearance_claim") != "none":
+        report["errors"].append("allowed corpus manifest attempted non-none legal clearance claim")
+
+    reviewed_candidates = payload.get("reviewed_candidates")
+    allowed_sources = payload.get("allowed_sources")
+    if not isinstance(reviewed_candidates, list):
+        report["errors"].append("reviewed_candidates field is missing or not a list")
+        return report
+    if not isinstance(allowed_sources, list):
+        report["errors"].append("allowed_sources field is missing or not a list")
+        return report
+
+    report["reviewed_candidates"] = reviewed_candidates
+    report["allowed_sources"] = allowed_sources
+    report["reviewed_candidate_source_count"] = len(reviewed_candidates)
+    report["allowed_source_count"] = len(allowed_sources)
+
+    metadata = load_manual_source_license_metadata(metadata_path)
+    metadata_by_key = metadata.get("records_by_key", {})
+    configured_exclusions = set(getattr(train_cfg, "excluded_benchmark_sources", ()))
+
+    seen_reviewed = set()
+    for index, item in enumerate(reviewed_candidates):
+        if not isinstance(item, dict):
+            report["errors"].append(f"reviewed_candidates[{index}] is not an object")
+            continue
+        source_id = str(item.get("source_id", "")).strip()
+        subset = item.get("subset")
+        if not source_id:
+            report["errors"].append(f"reviewed_candidates[{index}] has empty source_id")
+            continue
+        key = _source_metadata_key(source_id, subset)
+        if key in seen_reviewed:
+            report["errors"].append(f"duplicate reviewed candidate for {key}")
+        seen_reviewed.add(key)
+        status = str(item.get("repo_policy_status", "")).strip()
+        if status not in MANUAL_LICENSE_ALLOWED["repo_policy_status"]:
+            report["errors"].append(
+                f"reviewed_candidates[{index}] repo_policy_status has invalid value {status!r}"
+            )
+        metadata_record = metadata_by_key.get(key)
+        if metadata_record is None:
+            report["errors"].append(f"reviewed_candidates[{index}] missing metadata record for {key}")
+            continue
+        if metadata_record["repo_policy_status"] != status:
+            report["errors"].append(
+                f"reviewed_candidates[{index}] repo_policy_status does not match source metadata for {key}"
+            )
+
+    seen_allowed = set()
+    for index, item in enumerate(allowed_sources):
+        if not isinstance(item, dict):
+            report["errors"].append(f"allowed_sources[{index}] is not an object")
+            continue
+        source_id = str(item.get("source_id", "")).strip()
+        subset = item.get("subset")
+        if not source_id:
+            report["errors"].append(f"allowed_sources[{index}] has empty source_id")
+            continue
+        key = _source_metadata_key(source_id, subset)
+        if key in seen_allowed:
+            report["errors"].append(f"duplicate allowed source for {key}")
+        seen_allowed.add(key)
+        metadata_record = metadata_by_key.get(key)
+        if metadata_record is None:
+            report["errors"].append(f"allowed_sources[{index}] missing metadata record for {key}")
+            continue
+        if metadata_record["repo_policy_status"] != "allowed_by_repo_policy":
+            report["errors"].append(
+                f"allowed_sources[{index}] is not allowed_by_repo_policy in source metadata for {key}"
+            )
+        if metadata_record["declared_license"] == "unknown":
+            report["errors"].append(
+                f"allowed_sources[{index}] has unknown declared_license in source metadata for {key}"
+            )
+        if source_id in configured_exclusions:
+            report["errors"].append(
+                f"allowed_sources[{index}] uses configured benchmark exclusion source {source_id}"
+            )
+        if metadata_record["legal_clearance_claim"] != "none":
+            report["errors"].append(
+                f"allowed_sources[{index}] attempted non-none legal clearance claim for {key}"
+            )
+
+    report["ok"] = not report["errors"]
     return report
 
 
@@ -807,6 +969,13 @@ def build_dataset_source_manifest(
             "governance_classification": governance_classification,
             "repo_policy_status": repo_policy_status,
             "training_blocker_level": training_blocker_level,
+            "benchmark_risk_status": metadata.get(
+                "benchmark_risk_status",
+                "benchmark_excluded" if benchmark_risk else "not_flagged",
+            ),
+            "intended_training_role": metadata.get("intended_training_role", "none"),
+            "provenance_evidence": list(metadata.get("provenance_evidence", [])),
+            "exclusion_rationale": metadata.get("exclusion_rationale", ""),
             "notes": metadata.get("notes", ""),
             "legal_clearance_claim": "none",
             "benchmark_risk": benchmark_risk,
@@ -1213,6 +1382,7 @@ def build_benchmark_source_risk_report(
 
 def build_data_governance_report() -> dict:
     source_manifest = build_dataset_source_manifest()
+    allowed_corpus = load_allowed_corpus_manifest()
     dedup = build_exact_chunk_dedup_report()
     benchmark_risk = build_benchmark_source_risk_report()
     summary = {
@@ -1243,6 +1413,11 @@ def build_data_governance_report() -> dict:
         "allowed_by_repo_policy_count": len(
             source_manifest.get("allowed_by_repo_policy_sources", [])
         ),
+        "allowed_corpus_manifest_ok": bool(allowed_corpus.get("ok")),
+        "allowed_corpus_source_count": int(allowed_corpus.get("allowed_source_count", 0)),
+        "reviewed_candidate_source_count": int(
+            allowed_corpus.get("reviewed_candidate_source_count", 0)
+        ),
         "declared_license_counts": source_manifest.get("declared_license_counts", {}),
         "governance_classification_counts": source_manifest.get(
             "governance_classification_counts",
@@ -1268,9 +1443,15 @@ def build_data_governance_report() -> dict:
     }
     return {
         "schema": "data_governance_evidence_v1",
-        "ok": bool(source_manifest["ok"] and dedup["ok"] and benchmark_risk["ok"]),
+        "ok": bool(
+            source_manifest["ok"]
+            and allowed_corpus["ok"]
+            and dedup["ok"]
+            and benchmark_risk["ok"]
+        ),
         "summary": summary,
         "source_manifest": source_manifest,
+        "allowed_corpus_manifest": allowed_corpus,
         "exact_dedup": dedup,
         "benchmark_source_risk": benchmark_risk,
         "quality_claim": "none",
