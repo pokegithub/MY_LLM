@@ -44,6 +44,7 @@ def build_context(
     *,
     max_file_chars: int = 4000,
     include_system_map: bool = False,
+    extra_notes: Sequence[str] = (),
 ) -> ContextBundle:
     workspace_root = str(Path(request.workspace_root).resolve())
     considered: List[str] = []
@@ -109,6 +110,7 @@ def build_context(
 
     if not files:
         notes.append("No targeted files were included; plan must remain conservative.")
+    notes.extend(str(item) for item in extra_notes if str(item).strip())
 
     return ContextBundle(
         workspace_root=workspace_root,

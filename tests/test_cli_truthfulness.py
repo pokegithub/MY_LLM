@@ -102,6 +102,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["status"], "plan_ready")
         self.assertEqual(payload["quality_claim"], "none")
         self.assertEqual(payload["schema"], "agent_phase2_report_v1")
+        self.assertIn("trajectory_store", payload)
 
     def test_agent_coding_task_without_backend_fails_closed(self):
         result = self.run_command(
@@ -120,6 +121,36 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertEqual(payload["status"], "blocked_unverified")
         self.assertIn("no coding backend configured", payload["blocked_reason"])
         self.assertEqual(payload["attempts"], [])
+        self.assertIn("trajectory_store", payload)
+
+    def test_trajectory_cli_surfaces_are_machine_readable(self):
+        result = self.run_command(
+            "agent-solve",
+            "--task",
+            'count substring "ana" in "banana"',
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        run_id = payload["run_id"]
+
+        listed = self.run_command("trajectory-list", "--json")
+        self.assertEqual(listed.returncode, 0, listed.stderr + listed.stdout)
+        list_payload = json.loads(listed.stdout)
+        self.assertEqual(list_payload["schema"], "agent_trajectory_list_v1")
+        self.assertGreaterEqual(list_payload["count"], 1)
+
+        shown = self.run_command("trajectory-show", "--run-id", run_id, "--json")
+        self.assertEqual(shown.returncode, 0, shown.stderr + shown.stdout)
+        show_payload = json.loads(shown.stdout)
+        self.assertEqual(show_payload["run_id"], run_id)
+        self.assertEqual(show_payload["learning_claim"], "none")
+
+        searched = self.run_command("trajectory-search", "--query", "banana", "--json")
+        self.assertEqual(searched.returncode, 0, searched.stderr + searched.stdout)
+        search_payload = json.loads(searched.stdout)
+        self.assertEqual(search_payload["schema"], "agent_trajectory_search_v1")
+        self.assertGreaterEqual(search_payload["count"], 1)
 
 
 if __name__ == "__main__":

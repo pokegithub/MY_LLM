@@ -66,6 +66,15 @@
 - Exact symbolic tasks still bypass the coding repair loop and remain deterministic-only.
 - Phase 2 still does not include trajectory retrieval, learning/export hooks, broad factual retrieval, or production model-backend integration. Those remain deferred.
 
+### Agent Phase 3 update
+
+- Date: 2026-05-03
+- Scope: Added replayable trajectory storage, deterministic metadata-based retrieval, and thin trajectory CLI surfaces to the `agent/` subsystem.
+- Agent runs now write machine-readable trajectories under `run_artifacts/agent_trajectories/<run_id>/trajectory.json`.
+- `trajectory-list`, `trajectory-show`, and `trajectory-search` expose stored trajectory metadata without claiming learning, semantic memory, or factual retrieval.
+- Retrieval is conservative and deterministic: metadata filters plus simple lexical ranking. It is useful for replay and small context hints, not a semantic memory system.
+- Phase 3 stores and retrieves prior experience only. Exporters, training hooks, preference data generation, and semantic memory remain explicitly deferred to Phase 4.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

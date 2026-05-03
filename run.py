@@ -5,6 +5,9 @@ Usage:
   python run.py agent-plan     Build a machine-readable agent plan
   python run.py agent-solve    Run the verified coding-agent solve path
   python run.py agent-verify   Run the verified coding-agent verification path
+  python run.py trajectory-list   List stored coding-agent trajectories
+  python run.py trajectory-show   Show one stored coding-agent trajectory
+  python run.py trajectory-search Search stored coding-agent trajectories
   python run.py tokenizer      Train the BPE tokenizer
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
@@ -149,6 +152,9 @@ def check_dependencies(command: str):
         "agent-plan": {},
         "agent-solve": {},
         "agent-verify": {},
+        "trajectory-list": {},
+        "trajectory-show": {},
+        "trajectory-search": {},
         "tokenizer": {"tokenizers": "tokenizers", "datasets": "datasets"},
         "download": {"numpy": "numpy", "datasets": "datasets"},
         "download-safe": {"numpy": "numpy", "datasets": "datasets"},
@@ -456,6 +462,13 @@ def run_agent_solve(args):
     _print_agent_report("AGENT SOLVE", payload)
 
 
+def _validate_trajectory_args(args):
+    if args.command == "trajectory-show" and not args.run_id:
+        raise ValueError("trajectory-show requires --run-id")
+    if args.command == "trajectory-search" and not (args.query or "").strip():
+        raise ValueError("trajectory-search requires --query")
+
+
 def run_agent_verify(args):
     from agent.orchestrator import verify_task
 
@@ -464,6 +477,119 @@ def run_agent_verify(args):
         _emit_json(payload)
         return
     _print_agent_report("AGENT VERIFY", payload)
+
+
+def _print_trajectory_summary(title: str, payload: dict):
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+    print(f"  trajectory_root : {payload['trajectory_root']}")
+    print(f"  count           : {payload['count']}")
+    items = payload.get("items") or []
+    for item in items:
+        print(
+            "  - "
+            f"{item['run_id']} "
+            f"status={item['status']} "
+            f"route={item['route']} "
+            f"origin={item.get('final_origin', 'none')}"
+        )
+        print(f"    task          : {item['task_text']}")
+    print("=" * 60)
+
+
+def _print_trajectory_record(title: str, payload: dict):
+    print("\n" + "=" * 60)
+    print(title)
+    print("=" * 60)
+    print(f"  run_id         : {payload['run_id']}")
+    print(f"  status         : {payload['status']}")
+    print(f"  route          : {payload['route']}")
+    print(f"  operation      : {payload['operation']}")
+    print(f"  final_origin   : {payload.get('final_origin', 'none')}")
+    print(f"  attempts       : {payload.get('attempt_count', 0)}")
+    print(f"  quality_claim  : {payload.get('quality_claim', 'none')}")
+    if payload.get("blocked_reason"):
+        print(f"  blocked_reason : {payload['blocked_reason']}")
+    print(f"  task           : {payload.get('task_text', '')}")
+    print("=" * 60)
+
+
+def run_trajectory_list(args):
+    from agent.retrieval import list_trajectories
+    from agent.trajectory import trajectory_root
+
+    items = list_trajectories(
+        route=args.route_filter,
+        status=args.status_filter,
+        touched_file=args.touched_file,
+        failure_class=args.failure_class,
+        limit=args.limit,
+    )
+    payload = {
+        "schema": "agent_trajectory_list_v1",
+        "trajectory_root": trajectory_root(),
+        "count": len(items),
+        "filters": {
+            "route": args.route_filter,
+            "status": args.status_filter,
+            "touched_file": args.touched_file,
+            "failure_class": args.failure_class,
+            "limit": args.limit,
+        },
+        "items": items,
+        "learning_claim": "none",
+    }
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_trajectory_summary("TRAJECTORY LIST", payload)
+
+
+def run_trajectory_show(args):
+    from agent.retrieval import show_trajectory
+
+    payload = show_trajectory(args.run_id)
+    if payload is None:
+        print(f"ERROR: trajectory not found for run_id={args.run_id}")
+        sys.exit(1)
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_trajectory_record("TRAJECTORY SHOW", payload)
+
+
+def run_trajectory_search(args):
+    from agent.retrieval import search_trajectories
+    from agent.trajectory import trajectory_root
+
+    items = search_trajectories(
+        query=args.query,
+        route=args.route_filter,
+        status=args.status_filter,
+        touched_file=args.touched_file,
+        failure_class=args.failure_class,
+        limit=args.limit,
+    )
+    payload = {
+        "schema": "agent_trajectory_search_v1",
+        "trajectory_root": trajectory_root(),
+        "query": args.query,
+        "count": len(items),
+        "filters": {
+            "route": args.route_filter,
+            "status": args.status_filter,
+            "touched_file": args.touched_file,
+            "failure_class": args.failure_class,
+            "limit": args.limit,
+        },
+        "items": items,
+        "learning_claim": "none",
+    }
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_trajectory_summary("TRAJECTORY SEARCH", payload)
 
 
 def run_hardware_validate():
@@ -1384,8 +1510,11 @@ def main():
         epilog="""
 Commands:
   agent-plan   Build a machine-readable agent plan for one task
-  agent-solve  Run the Phase 2 agent solve path
-  agent-verify Run the Phase 2 agent verification path
+  agent-solve  Run the Phase 3 agent solve path
+  agent-verify Run the Phase 3 agent verification path
+  trajectory-list   List stored coding-agent trajectories
+  trajectory-show   Show one stored coding-agent trajectory
+  trajectory-search Search stored coding-agent trajectories
   tokenizer    Train the BPE tokenizer
   download     Download and cache training data
     download-safe Download with network-safe defaults
@@ -1420,6 +1549,7 @@ Commands:
         "command",
         choices=[
             "agent-plan", "agent-solve", "agent-verify",
+            "trajectory-list", "trajectory-show", "trajectory-search",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
             "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
             "validate-short-run",
@@ -1486,6 +1616,42 @@ Commands:
         action="store_true",
         help="Attempt the bounded post-green optimizer after solve verification passes.",
     )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Run identifier for trajectory-show.",
+    )
+    parser.add_argument(
+        "--query",
+        default=None,
+        help="Keyword query for trajectory-search.",
+    )
+    parser.add_argument(
+        "--route-filter",
+        default=None,
+        help="Optional route filter for trajectory list/search.",
+    )
+    parser.add_argument(
+        "--status-filter",
+        default=None,
+        help="Optional final status filter for trajectory list/search.",
+    )
+    parser.add_argument(
+        "--touched-file",
+        default=None,
+        help="Optional touched-file filter for trajectory list/search.",
+    )
+    parser.add_argument(
+        "--failure-class",
+        default=None,
+        help="Optional failure-class filter for trajectory list/search.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum trajectory records to return for trajectory list/search.",
+    )
 
     args = parser.parse_args()
 
@@ -1502,12 +1668,21 @@ Commands:
     OUTPUT_JSON = bool(args.json)
     REPORT_PATH = args.report_path
 
+    try:
+        _validate_trajectory_args(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
+
     check_dependencies(args.command)
 
     commands = {
         "agent-plan": lambda: run_agent_plan(args),
         "agent-solve": lambda: run_agent_solve(args),
         "agent-verify": lambda: run_agent_verify(args),
+        "trajectory-list": lambda: run_trajectory_list(args),
+        "trajectory-show": lambda: run_trajectory_show(args),
+        "trajectory-search": lambda: run_trajectory_search(args),
         "tokenizer": run_tokenizer,
         "download": run_download,
         "download-safe": run_download_safe,

@@ -14,7 +14,9 @@ from agent.context import build_context
 from agent.exact_tools import execute_exact_task
 from agent.optimize import run_optimizer
 from agent.planner import build_plan
+from agent.retrieval import summarize_for_context
 from agent.router import route_task
+from agent.trajectory import write_trajectory_record
 from agent.types import (
     OPTIMIZATION_NOT_ATTEMPTED,
     PLAN_STATUS_READY,
@@ -146,6 +148,32 @@ def _finalize(
     payload["run_registry"] = registry_status
     payload["degraded_mode"] = bool(artifact_warnings)
     payload["artifact_warnings"] = artifact_warnings
+    trajectory_status = {
+        "ok": True,
+        "required": False,
+        "non_critical": True,
+    }
+    try:
+        trajectory_status = write_trajectory_record(payload)
+    except (OSError, PermissionError, TimeoutError, ValueError) as exc:
+        trajectory_status = {
+            "ok": False,
+            "error": str(exc),
+            "required": False,
+            "non_critical": True,
+            "warning": "non-critical trajectory write failed; primary agent report was still written",
+        }
+        artifact_warnings.append(
+            {
+                "target": "trajectory_store",
+                "severity": "warning",
+                "required": False,
+                "message": str(exc),
+            }
+        )
+    payload["trajectory_store"] = trajectory_status
+    payload["degraded_mode"] = bool(artifact_warnings)
+    payload["artifact_warnings"] = artifact_warnings
     _write_report(run_dir, payload)
     return payload
 
@@ -233,10 +261,19 @@ def plan_task(request: TaskRequest) -> Dict:
     run_id, run_dir = _new_run_dir("plan")
     route = route_task(request)
     include_system_map = "architecture" in request.task_text.lower() or "system" in request.task_text.lower()
+    retrieval_notes = ()
+    if route.route == ROUTE_CODING:
+        retrieval_notes = tuple(
+            summarize_for_context(
+                query=request.task_text,
+                file_hints=request.file_hints,
+            )
+        )
     context = build_context(
         request,
         max_file_chars=agent_cfg.max_file_excerpt_chars,
         include_system_map=include_system_map,
+        extra_notes=retrieval_notes,
     )
     plan = build_plan(request, route, context)
     return _finalize(
@@ -260,10 +297,19 @@ def verify_task(request: TaskRequest) -> Dict:
     run_id, run_dir = _new_run_dir("verify")
     route = route_task(request)
     include_system_map = "architecture" in request.task_text.lower() or "system" in request.task_text.lower()
+    retrieval_notes = ()
+    if route.route == ROUTE_CODING:
+        retrieval_notes = tuple(
+            summarize_for_context(
+                query=request.task_text,
+                file_hints=request.file_hints,
+            )
+        )
     context = build_context(
         request,
         max_file_chars=agent_cfg.max_file_excerpt_chars,
         include_system_map=include_system_map,
+        extra_notes=retrieval_notes,
     )
     plan = build_plan(request, route, context)
 
@@ -380,10 +426,19 @@ def solve_task(
     run_id, run_dir = _new_run_dir("solve")
     route = route_task(request)
     include_system_map = "architecture" in request.task_text.lower() or "system" in request.task_text.lower()
+    retrieval_notes = ()
+    if route.route == ROUTE_CODING:
+        retrieval_notes = tuple(
+            summarize_for_context(
+                query=request.task_text,
+                file_hints=request.file_hints,
+            )
+        )
     context = build_context(
         request,
         max_file_chars=agent_cfg.max_file_excerpt_chars,
         include_system_map=include_system_map,
+        extra_notes=retrieval_notes,
     )
     plan = build_plan(request, route, context)
 
