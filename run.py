@@ -10,7 +10,11 @@ Usage:
   python run.py token-manifest Reconstruct token artifact manifest from local cache
   python run.py token-integrity Inspect token artifact integrity metadata
   python run.py deps           Check declared dependency environment
+  python run.py hardware-validate Report current-machine hardware validation evidence
+  python run.py gpu-fit-validate Report bounded 4GB GPU fit evidence
+  python run.py data-governance Report source/license, dedup, and benchmark-risk evidence
   python run.py validate-real-path Run tiny real-token validation without pretraining
+  python run.py validate-short-run Run bounded multi-step real-token validation
   python run.py train-preflight Check training readiness without starting training
   python run.py deployment-info Show truthful deployment tier metadata
   python run.py train          Pretrain the base model
@@ -43,11 +47,32 @@ from security.validator import ValidationError, get_allowed_data_roots, safe_loa
 
 
 OUTPUT_JSON = False
-REPORT_PATH = os.path.join(
+DEFAULT_TINY_REPORT_PATH = os.path.join(
     ".",
     "run_artifacts",
     "tiny_real_data_validation_report.json",
 )
+DEFAULT_HARDWARE_REPORT_PATH = os.path.join(
+    ".",
+    "run_artifacts",
+    "hardware_readiness_report.json",
+)
+DEFAULT_GPU_FIT_REPORT_PATH = os.path.join(
+    ".",
+    "run_artifacts",
+    "gpu_constrained_fit_report.json",
+)
+DEFAULT_DATA_GOVERNANCE_REPORT_PATH = os.path.join(
+    ".",
+    "run_artifacts",
+    "data_governance_report.json",
+)
+DEFAULT_SHORT_VALIDATION_REPORT_PATH = os.path.join(
+    ".",
+    "run_artifacts",
+    "short_real_data_validation_report.json",
+)
+REPORT_PATH = None
 
 
 def _emit_json(payload):
@@ -120,7 +145,11 @@ def check_dependencies(command: str):
         "token-manifest": {"numpy": "numpy", "tokenizers": "tokenizers"},
         "token-integrity": {"numpy": "numpy"},
         "deps": {},
+        "hardware-validate": {"torch": "torch"},
+        "gpu-fit-validate": {"torch": "torch", "numpy": "numpy", "tokenizers": "tokenizers"},
+        "data-governance": {"numpy": "numpy"},
         "validate-real-path": {"torch": "torch", "numpy": "numpy", "tokenizers": "tokenizers", "datasets": "datasets"},
+        "validate-short-run": {"torch": "torch", "numpy": "numpy", "tokenizers": "tokenizers"},
         "train-preflight": {"torch": "torch", "numpy": "numpy"},
         "deployment-info": {},
         "train": {"torch": "torch", "numpy": "numpy", "datasets": "datasets"},
@@ -339,6 +368,183 @@ def run_deps():
         print("\nDEPENDENCY CHECK FAILED")
         sys.exit(1)
     print("\nDEPENDENCY CHECK PASSED")
+
+
+def run_hardware_validate():
+    """Report current-machine hardware validation evidence."""
+    import train
+
+    report = train.run_hardware_readiness_validation()
+    report_path = _write_json_report(
+        report,
+        REPORT_PATH or DEFAULT_HARDWARE_REPORT_PATH,
+    )
+    report["report_path"] = report_path
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    print("\n" + "=" * 60)
+    print("HARDWARE VALIDATION")
+    print("=" * 60)
+    nvidia = report.get("nvidia_smi", {})
+    system_gpus = nvidia.get("gpus", []) if isinstance(nvidia, dict) else []
+    print(f"  cuda_available        : {report['cuda_available']}")
+    print(f"  cuda_device_count     : {report['cuda_device_count']}")
+    print(f"  torch_version         : {report['torch_version']}")
+    print(f"  torch_cuda_runtime    : {report['torch_cuda_runtime']}")
+    print(f"  cudnn_available       : {report['cudnn_available']}")
+    print(f"  system_gpu_detected   : {report['system_gpu_detected']}")
+    if system_gpus:
+        first_gpu = system_gpus[0]
+        print(f"  system_gpu_name       : {first_gpu.get('name', 'unknown')}")
+        print(f"  system_gpu_vram_gb    : {first_gpu.get('total_memory_gb', 'unknown')}")
+        print(f"  system_gpu_compute    : {first_gpu.get('compute_capability', 'unknown')}")
+    print(f"  gpu_classification    : {report['gpu_result_classification']}")
+    print(f"  evidence_level        : {report['evidence_level']}")
+    print(f"  hardware_ready        : {report['hardware_ready_for_training']}")
+    tensor_ops = report.get("gpu_tensor_ops", {})
+    print(f"  gpu_tensor_op         : {tensor_ops.get('status', 'unknown')}")
+    validation = report.get("validation") or {}
+    print(f"  validation_status     : {validation.get('status', 'unknown')}")
+    print(f"  validation_device     : {validation.get('device_type', 'unknown')}")
+    print(f"  dtype_used            : {validation.get('amp_dtype_used', 'unknown')}")
+    print(f"  report_path           : {os.path.abspath(report_path)}")
+    print("  training_quality_claim: none")
+    for limitation in report.get("limitations", []):
+        print(f"  caveat                : {limitation}")
+    print("=" * 60)
+    if not report["ok"]:
+        sys.exit(1)
+
+
+def run_gpu_fit_validate():
+    """Report bounded 4GB GPU fit evidence without claiming training readiness."""
+    import train
+
+    report = train.run_gpu_constrained_fit_validation()
+    report_path = _write_json_report(
+        report,
+        REPORT_PATH or DEFAULT_GPU_FIT_REPORT_PATH,
+    )
+    report["report_path"] = report_path
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    print("\n" + "=" * 60)
+    print("GPU CONSTRAINED-FIT VALIDATION")
+    print("=" * 60)
+    interpreter = report.get("interpreter", {})
+    print(f"  interpreter        : {interpreter.get('executable', 'unknown')}")
+    print(f"  repo_venv          : {interpreter.get('is_repo_local_venv', False)}")
+    print(f"  cuda_available     : {report['cuda_available']}")
+    print(f"  torch_version      : {report['torch_version']}")
+    print(f"  torch_cuda_runtime : {report['torch_cuda_runtime']}")
+    print(f"  gpu_name           : {report.get('gpu_name')}")
+    print(f"  vram_gb            : {report.get('detected_total_vram_gb')}")
+    print(f"  hardware_class     : {report['hardware_classification']}")
+    print(f"  preferred_dtype    : {report['preferred_dtype']}")
+    print("\n  Fit matrix:")
+    for item in report.get("matrix", []):
+        peak = item.get("peak_allocated_gb", "unknown")
+        reserved = item.get("peak_reserved_gb", "unknown")
+        print(
+            "    [{fit:<23}] {name:<32} dtype={dtype:<8} "
+            "seq={seq:<4} peak={peak}GB reserved={reserved}GB".format(
+                fit=item.get("fit_classification", "unknown"),
+                name=item.get("name", "unknown"),
+                dtype=item.get("dtype_requested", "unknown"),
+                seq=item.get("seq_len", "unknown"),
+                peak=peak,
+                reserved=reserved,
+            )
+        )
+        if item.get("error"):
+            print(f"      error: {str(item['error'])[:180]}")
+    print(f"\n  smallest_fit       : {report.get('smallest_fitting_config')}")
+    print(f"  strongest_fit      : {report.get('strongest_fitting_config')}")
+    short = report.get("short_validation") or {}
+    print(
+        "  short_validation   : "
+        f"{short.get('fit_classification', 'not_run')}"
+    )
+    if short:
+        print(f"  short_steps        : {short.get('total_optimizer_steps', 'unknown')}")
+        print(f"  short_peak_memory  : {short.get('memory_peak_allocated_bytes', 'unknown')}")
+        print(f"  resume_success     : {short.get('resume_success', False)}")
+    default_fit = report.get("default_training_fit") or {}
+    print(f"  default_fit        : {default_fit.get('fit_classification', 'unknown')}")
+    print(f"  pretrain_changed   : {report['pretraining_readiness_changed']}")
+    print(f"  report_path        : {os.path.abspath(report_path)}")
+    print("  quality_claim      : none")
+    for limitation in report.get("limitations", []):
+        print(f"  caveat             : {limitation}")
+    print("=" * 60)
+    if not report["ok"]:
+        sys.exit(1)
+
+
+def run_data_governance():
+    """Report source/license, exact-dedup, and benchmark-risk evidence."""
+    import download_data
+
+    report = download_data.build_data_governance_report()
+    report_path = _write_json_report(
+        report,
+        REPORT_PATH or DEFAULT_DATA_GOVERNANCE_REPORT_PATH,
+    )
+    report["report_path"] = report_path
+    if OUTPUT_JSON:
+        _emit_json(report)
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    source_manifest = report["source_manifest"]
+    dedup = report["exact_dedup"]
+    benchmark_risk = report["benchmark_source_risk"]
+    summary = report.get("summary", {})
+    print("\n" + "=" * 60)
+    print("DATA GOVERNANCE EVIDENCE")
+    print("=" * 60)
+    print(f"  sources               : {source_manifest['source_count']}")
+    print(f"  active_sources        : {source_manifest['active_source_count']}")
+    print(f"  known_licenses        : {source_manifest['known_license_count']}")
+    print(f"  documented_licenses   : {source_manifest.get('documented_license_count', source_manifest['known_license_count'])}")
+    print(f"  unknown_licenses      : {source_manifest['unknown_license_count']}")
+    manual = source_manifest.get("manual_metadata", {})
+    print(f"  manual_metadata       : {manual.get('matched_source_count', 0)}/{source_manifest['source_count']} sources")
+    print(f"  repo_policy_counts    : {source_manifest.get('repo_policy_status_counts', {})}")
+    print(f"  blocker_counts        : {source_manifest.get('training_blocker_level_counts', {})}")
+    print(f"  active_hard_blockers  : {source_manifest.get('active_hard_blocker_count', 'unknown')}")
+    print(f"  allowed_by_policy     : {len(source_manifest.get('allowed_by_repo_policy_sources', []))}")
+    print(f"  policy_blocks_training: {source_manifest.get('serious_training_blocked_by_policy', True)}")
+    print(f"  license_counts        : {source_manifest.get('declared_license_counts', {})}")
+    print(f"  governance_counts     : {source_manifest.get('governance_classification_counts', {})}")
+    print(f"  dedup_scope           : {dedup.get('scope', 'unknown')}")
+    print(f"  chunks_available_est  : {dedup.get('chunks_available_estimate', 'unknown')}")
+    print(f"  exact_chunks_checked  : {dedup['chunks_inspected']}")
+    print(f"  exact_duplicate_chunks: {dedup['duplicate_chunks']}")
+    print(f"  duplicate_ratio       : {dedup['duplicate_ratio']}")
+    tv = dedup.get("train_val_exact_overlap", {})
+    print(f"  train_val_overlap    : {tv.get('overlap_chunks', 'unknown')}")
+    source_risk = benchmark_risk.get("source_level_risk", {})
+    content_overlap = benchmark_risk.get("content_level_overlap", {})
+    print(f"  benchmark_source_hits : {source_risk.get('risk_artifact_count', benchmark_risk['source_artifact_risk_count'])}")
+    print(f"  source_risk_claim     : {source_risk.get('claim', 'source_level_risk_only')}")
+    print(f"  content_overlap       : {content_overlap.get('status', benchmark_risk['content_overlap_status'])}")
+    print(f"  report_path           : {os.path.abspath(report_path)}")
+    print("  legal_clearance_claim : none")
+    print("  contamination_claim   : none")
+    print(f"  training_ready_change : {summary.get('training_readiness_changed', 'no')}")
+    print("=" * 60)
+    if not report["ok"]:
+        sys.exit(1)
 
 
 def run_tokenizer():
@@ -606,7 +812,10 @@ def run_validate_real_path():
             print(f"ERROR: tiny real-data validation failed: {exc}")
         sys.exit(1)
 
-    report["report_path"] = _write_json_report(report, REPORT_PATH)
+    report["report_path"] = _write_json_report(
+        report,
+        REPORT_PATH or DEFAULT_TINY_REPORT_PATH,
+    )
     if OUTPUT_JSON:
         _emit_json(report)
         return
@@ -623,6 +832,59 @@ def run_validate_real_path():
     print(f"  eval gate         : {report['eval_missing_checkpoint_gate']}")
     print(f"  report_path       : {os.path.abspath(report['report_path'])}")
     print("  quality_claim     : none")
+    print("=" * 60)
+
+
+def run_validate_short_run():
+    """Run bounded multi-step real-token validation without pretraining."""
+    import train
+
+    try:
+        report = train.run_short_real_data_validation(
+            checkpoint_dir="./run_artifacts/short_real_data_validation",
+            seq_len=16,
+            pre_resume_steps=3,
+            post_resume_steps=2,
+            deterministic=True,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        payload = {
+            "schema": "short_real_data_validation_v1",
+            "ok": False,
+            "error": str(exc),
+            "quality_claim": "none",
+            "run_classification": "bounded_validation_not_pretraining",
+        }
+        if OUTPUT_JSON:
+            _emit_json(payload)
+        else:
+            print(f"ERROR: short real-data validation failed: {exc}")
+        sys.exit(1)
+
+    report_path = _write_json_report(
+        report,
+        REPORT_PATH or DEFAULT_SHORT_VALIDATION_REPORT_PATH,
+    )
+    report["report_path"] = report_path
+    if OUTPUT_JSON:
+        _emit_json(report)
+        return
+
+    print("\n" + "=" * 60)
+    print("SHORT REAL-DATA VALIDATION")
+    print("=" * 60)
+    print(f"  classification     : {report['run_classification']}")
+    print(f"  artifact_path      : {report['artifact_path']}")
+    print(f"  total_steps        : {report['total_optimizer_steps']}")
+    print(f"  device             : {report['device']}")
+    print(f"  dtype_used         : {report['amp_dtype_used']}")
+    print(f"  resumed_step       : {report['resumed_step']}")
+    print(f"  resume_success     : {report['resume_success']}")
+    print(f"  final_checkpoint   : {report['final_checkpoint']}")
+    print(f"  eval gate          : {report['eval_gate_on_produced_checkpoint']}")
+    print(f"  missing eval gate  : {report['eval_missing_checkpoint_gate']}")
+    print(f"  report_path        : {os.path.abspath(report_path)}")
+    print("  quality_claim      : none")
     print("=" * 60)
 
 
@@ -1033,7 +1295,11 @@ Commands:
   token-manifest Reconstruct token artifact manifest from local cache
   token-integrity Inspect token artifact integrity metadata
   deps          Check declared dependency environment
+  hardware-validate Report current-machine hardware validation evidence
+  gpu-fit-validate Report bounded 4GB GPU fit evidence
+  data-governance Report source/license, dedup, and benchmark-risk evidence
   validate-real-path Run tiny real-token validation without pretraining
+  validate-short-run Run bounded multi-step real-token validation
   train-preflight Check training readiness without starting training
   deployment-info Show truthful deployment tier metadata
   train        Pretrain the base model
@@ -1055,7 +1321,8 @@ Commands:
         "command",
         choices=[
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
-            "token-integrity", "deps", "validate-real-path",
+            "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
+            "validate-short-run",
             "train-preflight", "deployment-info", "train", "sft", "dpo", "distill", "quantize", "hw-profile", "eval-harness",
             "improve", "eval", "benchmark-harness", "audit", "full", "status",
         ],
@@ -1084,8 +1351,8 @@ Commands:
     )
     parser.add_argument(
         "--report-path",
-        default=REPORT_PATH,
-        help="JSON report path for validate-real-path.",
+        default=None,
+        help="JSON report path for report-producing validation commands.",
     )
 
     args = parser.parse_args()
@@ -1114,7 +1381,11 @@ Commands:
         "token-manifest": run_token_manifest,
         "token-integrity": run_token_integrity,
         "deps": run_deps,
+        "hardware-validate": run_hardware_validate,
+        "gpu-fit-validate": run_gpu_fit_validate,
+        "data-governance": run_data_governance,
         "validate-real-path": run_validate_real_path,
+        "validate-short-run": run_validate_short_run,
         "train-preflight": run_train_preflight,
         "deployment-info": run_deployment_info,
         "train": run_train,

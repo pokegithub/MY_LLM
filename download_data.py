@@ -35,6 +35,9 @@ MANIFEST_PATH = os.path.join(".", "data_cache", "download_manifest.json")
 TOKEN_ARTIFACT_MANIFEST_PATH = os.path.join(
     ".", "data_cache", "token_artifacts_manifest.json"
 )
+SOURCE_LICENSE_METADATA_PATH = os.path.join(
+    ".", "data_governance", "source_license_metadata.json"
+)
 NETWORK_SAFE_FLAKY_SOURCES = {
     "HuggingFaceTB/smollm-corpus",
     "codeparrot/github-code",
@@ -147,6 +150,38 @@ ALL_SOURCES = [
     ("winogrande", "winogrande_xl", 0.5,
      lambda x: str(x.get("sentence", "")).strip()),
 ]
+
+SOURCE_GOVERNANCE_METADATA = {
+    "HuggingFaceFW/fineweb-edu": {"category": "web", "domain": "general_web"},
+    "wikimedia/wikipedia": {"category": "reference", "domain": "encyclopedic"},
+    "HuggingFaceTB/smollm-corpus": {"category": "synthetic_mix", "domain": "mixed"},
+    "open-phi/textbooks": {"category": "textbook", "domain": "education"},
+    "HuggingFaceTB/finemath": {"category": "math", "domain": "education"},
+    "open-web-math/open-web-math": {"category": "math", "domain": "web"},
+    "openai/gsm8k": {"category": "benchmark", "domain": "math"},
+    "microsoft/orca-math-word-problems-200k": {"category": "math", "domain": "synthetic_instruction"},
+    "TIGER-Lab/MathInstruct": {"category": "math", "domain": "instruction"},
+    "lighteval/MATH-Hard": {"category": "benchmark_like", "domain": "math"},
+    "m-a-p/CodeFeedback-Filtered-Instruction": {"category": "code", "domain": "instruction"},
+    "ise-uiuc/Magicoder-Evol-Instruct-110K": {"category": "code", "domain": "instruction"},
+    "iamtarun/python_code_instructions_18k_alpaca": {"category": "code", "domain": "instruction"},
+    "codeparrot/github-code": {"category": "code", "domain": "source_code"},
+    "ajibawa-2023/Code-290k-ShareGPT": {"category": "code", "domain": "chat_instruction"},
+    "bigcode/self-oss-instruct-sc2-exec-filter-50k": {"category": "code", "domain": "instruction"},
+    "nickrosh/Evol-Instruct-Code-80k-v1": {"category": "code", "domain": "instruction"},
+    "deepmind/code_contests": {"category": "benchmark_like", "domain": "code"},
+    "code-search-net/code_search_net": {"category": "code", "domain": "source_code"},
+    "b-mc2/sql-create-context": {"category": "code", "domain": "sql"},
+    "argilla/magpie-ultra-v0.1": {"category": "instruction", "domain": "synthetic_chat"},
+    "HuggingFaceH4/ultrachat_200k": {"category": "instruction", "domain": "chat"},
+    "teknium/OpenHermes-2.5": {"category": "instruction", "domain": "chat"},
+    "Open-Orca/SlimOrca": {"category": "instruction", "domain": "chat"},
+    "google/boolq": {"category": "benchmark", "domain": "qa"},
+    "truthful_qa": {"category": "benchmark", "domain": "truthfulness"},
+    "Anthropic/hh-rlhf": {"category": "preference", "domain": "chat"},
+    "allenai/ai2_arc": {"category": "benchmark", "domain": "science_qa"},
+    "winogrande": {"category": "benchmark", "domain": "commonsense"},
+}
 
 
 def active_sources():
@@ -522,6 +557,726 @@ def validate_token_artifact_manifest(
     )
     report["ok"] = report["failed_artifact_count"] == 0 and report["artifact_count"] > 0
     return report
+
+
+MANUAL_LICENSE_ALLOWED = {
+    "license_evidence_source": {"manual_repo_metadata", "unknown"},
+    "review_basis": {
+        "not_reviewed",
+        "manual_source_page_review",
+        "manual_dataset_card_review",
+        "manual_repo_policy_decision",
+    },
+    "governance_classification": {
+        "unknown",
+        "needs_manual_review",
+        "excluded_from_training",
+        "documented_but_unreviewed",
+        "policy_allowed_but_not_legally_cleared",
+    },
+    "repo_policy_status": {
+        "unspecified",
+        "excluded",
+        "blocked_pending_review",
+        "allowed_by_repo_policy",
+        "restricted",
+    },
+    "training_blocker_level": {"hard_blocker", "caution", "informational"},
+    "legal_clearance_claim": {"none"},
+}
+
+
+def _source_metadata_key(source: str, subset) -> str:
+    normalized_subset = "null" if subset is None else str(subset)
+    return f"{source}::{normalized_subset}"
+
+
+def load_manual_source_license_metadata(
+    metadata_path: str = SOURCE_LICENSE_METADATA_PATH,
+) -> dict:
+    """Load manually curated source metadata without treating it as legal clearance."""
+    report = {
+        "schema": "manual_source_license_metadata_load_v1",
+        "path": metadata_path,
+        "exists": os.path.isfile(metadata_path),
+        "ok": False,
+        "record_count": 0,
+        "records": [],
+        "records_by_key": {},
+        "errors": [],
+        "legal_clearance_claim": "none",
+    }
+    if not report["exists"]:
+        report["errors"].append("metadata file is missing")
+        return report
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"metadata_load_failed: {exc}")
+        return report
+    if not isinstance(payload, dict):
+        report["errors"].append("metadata payload is not an object")
+        return report
+    if payload.get("legal_clearance_claim") != "none":
+        report["errors"].append("metadata file attempted non-none legal clearance claim")
+    records = payload.get("records")
+    if not isinstance(records, list):
+        report["errors"].append("metadata records field is missing or not a list")
+        return report
+
+    normalized_records = []
+    for index, raw in enumerate(records):
+        if not isinstance(raw, dict):
+            report["errors"].append(f"record[{index}] is not an object")
+            continue
+        source_id = str(raw.get("source_id", "")).strip()
+        if not source_id:
+            report["errors"].append(f"record[{index}] has empty source_id")
+            continue
+        subset = raw.get("subset")
+        declared_license = str(raw.get("declared_license", "unknown")).strip() or "unknown"
+        record = {
+            "source_id": source_id,
+            "subset": subset,
+            "source_category": str(raw.get("source_category", "unknown") or "unknown"),
+            "source_domain": str(raw.get("source_domain", "unknown") or "unknown"),
+            "declared_license": declared_license,
+            "license_evidence_source": str(
+                raw.get("license_evidence_source", "unknown") or "unknown"
+            ),
+            "review_basis": str(raw.get("review_basis", "not_reviewed") or "not_reviewed"),
+            "governance_classification": str(
+                raw.get("governance_classification", "unknown") or "unknown"
+            ),
+            "repo_policy_status": str(
+                raw.get("repo_policy_status", "unspecified") or "unspecified"
+            ),
+            "training_blocker_level": str(
+                raw.get("training_blocker_level", "hard_blocker") or "hard_blocker"
+            ),
+            "notes": str(raw.get("notes", "")),
+            "legal_clearance_claim": str(
+                raw.get("legal_clearance_claim", "none") or "none"
+            ),
+            "metadata_evidence_status": "manual_metadata_present",
+        }
+        for field, allowed in MANUAL_LICENSE_ALLOWED.items():
+            if record[field] not in allowed:
+                report["errors"].append(
+                    f"record[{index}] {field} has invalid value {record[field]!r}"
+                )
+        if declared_license != "unknown" and record["license_evidence_source"] == "unknown":
+            report["errors"].append(
+                f"record[{index}] documents a license without evidence source"
+            )
+        key = _source_metadata_key(source_id, subset)
+        if key in report["records_by_key"]:
+            report["errors"].append(f"duplicate metadata record for {key}")
+        report["records_by_key"][key] = record
+        normalized_records.append(record)
+
+    report["records"] = normalized_records
+    report["record_count"] = len(normalized_records)
+    report["ok"] = not report["errors"] and report["record_count"] > 0
+    return report
+
+
+def _source_governance_metadata(source: str) -> dict:
+    return dict(SOURCE_GOVERNANCE_METADATA.get(source, {}))
+
+
+def _source_governance_classification(
+    *,
+    active_now: bool,
+    benchmark_risk: bool,
+    declared_license,
+    metadata_classification: str = "unknown",
+    repo_policy_status: str = "unspecified",
+) -> str:
+    if repo_policy_status == "excluded":
+        return "excluded_from_training"
+    if not active_now:
+        return "excluded_from_training"
+    if benchmark_risk:
+        return "excluded_from_training"
+    if repo_policy_status == "allowed_by_repo_policy":
+        return "policy_allowed_but_not_legally_cleared"
+    if repo_policy_status == "blocked_pending_review":
+        return "needs_manual_review"
+    if metadata_classification in MANUAL_LICENSE_ALLOWED["governance_classification"]:
+        if metadata_classification != "unknown":
+            return metadata_classification
+    if declared_license and declared_license != "unknown":
+        return "known_but_unreviewed"
+    return "needs_manual_review"
+
+
+def _training_blocker_level(
+    *,
+    active_now: bool,
+    repo_policy_status: str,
+    declared_license,
+    metadata_level: str = "hard_blocker",
+) -> str:
+    if repo_policy_status in {"excluded", "blocked_pending_review"}:
+        return "hard_blocker"
+    if not active_now:
+        return "hard_blocker"
+    if declared_license in {None, "unknown", ""}:
+        return "hard_blocker"
+    if repo_policy_status == "allowed_by_repo_policy":
+        return "caution"
+    if repo_policy_status == "restricted":
+        return "caution"
+    if metadata_level in MANUAL_LICENSE_ALLOWED["training_blocker_level"]:
+        return metadata_level
+    return "hard_blocker"
+
+
+def build_dataset_source_manifest(
+    *,
+    metadata_path: str = SOURCE_LICENSE_METADATA_PATH,
+) -> dict:
+    """Build source governance evidence from the local registry only."""
+    manual_metadata = load_manual_source_license_metadata(metadata_path)
+    metadata_by_key = manual_metadata.get("records_by_key", {})
+    active = {
+        (path, sub)
+        for path, sub, _, _ in active_sources()
+    }
+    configured_exclusions = set(
+        getattr(train_cfg, "excluded_benchmark_sources", ())
+    )
+    records = []
+    missing_metadata_count = 0
+    for source, subset, weight, _ in ALL_SOURCES:
+        benchmark_risk = source in configured_exclusions
+        active_now = (source, subset) in active
+        fallback = _source_governance_metadata(source)
+        metadata = metadata_by_key.get(_source_metadata_key(source, subset))
+        metadata_status = "manual_metadata_present"
+        if metadata is None:
+            metadata_status = "missing_manual_metadata"
+            missing_metadata_count += 1
+            metadata = {
+                "source_category": fallback.get("category", "unknown"),
+                "source_domain": fallback.get("domain", "unknown"),
+                "declared_license": "unknown",
+                "license_evidence_source": "unknown",
+                "review_basis": "not_reviewed",
+                "governance_classification": "unknown",
+                "repo_policy_status": "blocked_pending_review",
+                "training_blocker_level": "hard_blocker",
+                "notes": "manual metadata entry missing",
+                "legal_clearance_claim": "none",
+            }
+        declared_license = metadata.get("declared_license", "unknown") or "unknown"
+        repo_policy_status = metadata.get("repo_policy_status", "unspecified")
+        governance_classification = _source_governance_classification(
+            active_now=active_now,
+            benchmark_risk=benchmark_risk,
+            declared_license=declared_license,
+            metadata_classification=metadata.get("governance_classification", "unknown"),
+            repo_policy_status=repo_policy_status,
+        )
+        training_blocker_level = _training_blocker_level(
+            active_now=active_now,
+            repo_policy_status=repo_policy_status,
+            declared_license=declared_license,
+            metadata_level=metadata.get("training_blocker_level", "hard_blocker"),
+        )
+        license_status = (
+            "known_but_unreviewed" if declared_license != "unknown" else "unknown"
+        )
+        records.append({
+            "source": source,
+            "subset": subset,
+            "dataset_split": SPLIT_OVERRIDES.get(source, "train"),
+            "weight": weight,
+            "source_category": metadata.get("source_category", fallback.get("category", "unknown")),
+            "source_domain": metadata.get("source_domain", fallback.get("domain", "unknown")),
+            "active_in_current_config": active_now,
+            "excluded_by_current_config": not active_now,
+            "declared_license": declared_license,
+            "license_status": license_status,
+            "license_review_status": metadata.get("review_basis", "not_reviewed"),
+            "license_evidence_source": metadata.get("license_evidence_source", "unknown"),
+            "review_basis": metadata.get("review_basis", "not_reviewed"),
+            "metadata_evidence_status": metadata_status,
+            "governance_classification": governance_classification,
+            "repo_policy_status": repo_policy_status,
+            "training_blocker_level": training_blocker_level,
+            "notes": metadata.get("notes", ""),
+            "legal_clearance_claim": "none",
+            "benchmark_risk": benchmark_risk,
+            "source_level_contamination_risk": "source_id_overlap"
+            if benchmark_risk
+            else "not_flagged_by_configured_source_ids",
+            "benchmark_risk_basis": (
+                "listed in train_cfg.excluded_benchmark_sources"
+                if benchmark_risk
+                else "not listed in train_cfg.excluded_benchmark_sources"
+            ),
+        })
+
+    governance_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    domain_counts: dict[str, int] = {}
+    repo_policy_counts: dict[str, int] = {}
+    blocker_counts: dict[str, int] = {}
+    declared_license_counts: dict[str, int] = {}
+    evidence_counts: dict[str, int] = {}
+    hard_blockers = []
+    allowed_by_repo_policy = []
+    for item in records:
+        governance_counts[item["governance_classification"]] = (
+            governance_counts.get(item["governance_classification"], 0) + 1
+        )
+        category_counts[item["source_category"]] = (
+            category_counts.get(item["source_category"], 0) + 1
+        )
+        domain_counts[item["source_domain"]] = (
+            domain_counts.get(item["source_domain"], 0) + 1
+        )
+        repo_policy_counts[item["repo_policy_status"]] = (
+            repo_policy_counts.get(item["repo_policy_status"], 0) + 1
+        )
+        blocker_counts[item["training_blocker_level"]] = (
+            blocker_counts.get(item["training_blocker_level"], 0) + 1
+        )
+        declared_license_counts[item["declared_license"]] = (
+            declared_license_counts.get(item["declared_license"], 0) + 1
+        )
+        evidence_counts[item["license_evidence_source"]] = (
+            evidence_counts.get(item["license_evidence_source"], 0) + 1
+        )
+        blocker_summary = {
+            "source": item["source"],
+            "subset": item["subset"],
+            "source_category": item["source_category"],
+            "repo_policy_status": item["repo_policy_status"],
+            "governance_classification": item["governance_classification"],
+            "training_blocker_level": item["training_blocker_level"],
+            "reason": item["notes"],
+        }
+        if item["training_blocker_level"] == "hard_blocker":
+            hard_blockers.append(blocker_summary)
+        if item["repo_policy_status"] == "allowed_by_repo_policy":
+            allowed_by_repo_policy.append(blocker_summary)
+
+    known_license_count = sum(
+        1 for item in records if item["license_status"] == "known_but_unreviewed"
+    )
+    manual_metadata_matched = sum(
+        1 for item in records if item["metadata_evidence_status"] == "manual_metadata_present"
+    )
+    active_hard_blockers = [
+        item for item in records
+        if item["active_in_current_config"]
+        and item["training_blocker_level"] == "hard_blocker"
+    ]
+    return {
+        "schema": "dataset_source_governance_v1",
+        "ok": not bool(manual_metadata.get("errors")),
+        "source_count": len(records),
+        "active_source_count": sum(
+            1 for item in records if item["active_in_current_config"]
+        ),
+        "excluded_source_count": sum(
+            1 for item in records if item["excluded_by_current_config"]
+        ),
+        "known_license_count": known_license_count,
+        "documented_license_count": known_license_count,
+        "unknown_license_count": len(records) - known_license_count,
+        "manual_metadata": {
+            "path": metadata_path,
+            "exists": bool(manual_metadata.get("exists")),
+            "ok": bool(manual_metadata.get("ok")),
+            "record_count": int(manual_metadata.get("record_count", 0)),
+            "matched_source_count": manual_metadata_matched,
+            "missing_source_metadata_count": missing_metadata_count,
+            "coverage_ratio": round(manual_metadata_matched / max(1, len(records)), 8),
+            "errors": list(manual_metadata.get("errors", [])),
+            "legal_clearance_claim": "none",
+        },
+        "governance_classification_counts": dict(sorted(governance_counts.items())),
+        "repo_policy_status_counts": dict(sorted(repo_policy_counts.items())),
+        "training_blocker_level_counts": dict(sorted(blocker_counts.items())),
+        "declared_license_counts": dict(sorted(declared_license_counts.items())),
+        "source_category_counts": dict(sorted(category_counts.items())),
+        "source_domain_counts": dict(sorted(domain_counts.items())),
+        "license_evidence_source_counts": dict(sorted(evidence_counts.items())),
+        "license_evidence_sources": sorted(evidence_counts),
+        "legal_clearance_claim": "none",
+        "serious_training_blocked_by_policy": bool(active_hard_blockers),
+        "active_hard_blocker_count": len(active_hard_blockers),
+        "hard_blockers": hard_blockers,
+        "allowed_by_repo_policy_sources": allowed_by_repo_policy,
+        "quality_claim": "none",
+        "sources": records,
+        "limitations": [
+            "Licenses are not fetched from remote dataset cards by this report.",
+            "Repo-side source category metadata is not license evidence.",
+            "Manual metadata documents repo-side review state; it is not legal advice.",
+            "repo_policy_status=allowed_by_repo_policy would not mean legal clearance.",
+            "license_status=unknown is not legal clearance.",
+            "license_status=known_but_unreviewed would still require manual legal review.",
+            "benchmark_risk is source-registry metadata, not content contamination detection.",
+        ],
+    }
+
+
+def build_exact_chunk_dedup_report(
+    *,
+    manifest_path: str = TOKEN_ARTIFACT_MANIFEST_PATH,
+    chunk_tokens: int = 2048,
+    max_artifacts: int = 16,
+    max_chunks_per_artifact: int = 256,
+    include_validation_overlap: bool = True,
+) -> dict:
+    """Hash exact token chunks in a bounded sample; no near-dedup claim."""
+    if chunk_tokens <= 0:
+        raise ValueError("chunk_tokens must be > 0")
+    if max_artifacts <= 0:
+        raise ValueError("max_artifacts must be > 0")
+    if max_chunks_per_artifact <= 0:
+        raise ValueError("max_chunks_per_artifact must be > 0")
+
+    report = {
+        "schema": "exact_token_chunk_dedup_v1",
+        "ok": False,
+        "manifest_path": manifest_path,
+        "scope": "bounded_exact_chunk_sample",
+        "chunk_tokens": int(chunk_tokens),
+        "max_artifacts": int(max_artifacts),
+        "max_chunks_per_artifact": int(max_chunks_per_artifact),
+        "include_validation_overlap": bool(include_validation_overlap),
+        "total_manifest_artifacts": 0,
+        "eligible_train_artifact_count": 0,
+        "selected_train_artifact_count": 0,
+        "chunks_available_estimate": 0,
+        "chunks_coverage_ratio": 0.0,
+        "full_exact_chunk_scan": False,
+        "artifacts_inspected": 0,
+        "chunks_inspected": 0,
+        "duplicate_chunks": 0,
+        "duplicate_ratio": 0.0,
+        "duplicates_by_source": {},
+        "inspected_chunks_by_source": {},
+        "train_val_exact_overlap": {
+            "scope": "bounded_exact_chunk_sample",
+            "enabled": bool(include_validation_overlap),
+            "validation_artifacts_inspected": 0,
+            "validation_chunks_inspected": 0,
+            "overlap_chunks": 0,
+            "overlap_ratio": 0.0,
+            "overlap_examples": [],
+            "claim": "bounded_exact_overlap_only",
+        },
+        "duplicate_examples": [],
+        "near_dedup_claim": "none",
+        "full_corpus_dedup_claim": "none",
+        "errors": [],
+        "limitations": [
+            "Only exact byte-identical token chunks are detected.",
+            "This is a bounded sample unless max_artifacts/max_chunks cover all artifacts.",
+            "No semantic, fuzzy, MinHash, or near-duplicate detection is performed.",
+        ],
+    }
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"manifest_load_failed: {exc}")
+        return report
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        report["errors"].append("manifest artifacts field is missing or not a list")
+        return report
+
+    report["total_manifest_artifacts"] = len(artifacts)
+    eligible_train = [
+        item for item in artifacts
+        if isinstance(item, dict)
+        and item.get("artifact_split") == "train"
+        and os.path.isfile(str(item.get("path", "")))
+    ]
+    eligible_validation = [
+        item for item in artifacts
+        if isinstance(item, dict)
+        and item.get("artifact_split") == "validation"
+        and os.path.isfile(str(item.get("path", "")))
+    ]
+    report["eligible_train_artifact_count"] = len(eligible_train)
+
+    def _chunk_count(item: dict) -> int:
+        path = str(item.get("path", ""))
+        try:
+            dtype = np.dtype(item.get("dtype", "uint16"))
+        except (TypeError, ValueError):
+            return 0
+        if not os.path.isfile(path):
+            return 0
+        return os.path.getsize(path) // dtype.itemsize // chunk_tokens
+
+    total_available_chunks = sum(_chunk_count(item) for item in eligible_train)
+    report["chunks_available_estimate"] = int(total_available_chunks)
+    selected_train = eligible_train[:max_artifacts]
+    report["selected_train_artifact_count"] = len(selected_train)
+
+    seen: dict[str, dict] = {}
+
+    def _scan_item_chunks(item: dict, *, target_seen: dict[str, dict] | None = None):
+        path = str(item.get("path", ""))
+        try:
+            dtype = np.dtype(item.get("dtype", "uint16"))
+        except (TypeError, ValueError) as exc:
+            report["errors"].append(f"invalid dtype for {path}: {exc}")
+            return []
+        data = np.memmap(path, dtype=dtype, mode="r")
+        chunks = min(len(data) // chunk_tokens, max_chunks_per_artifact)
+        chunk_records = []
+        for chunk_index in range(chunks):
+            start = chunk_index * chunk_tokens
+            end = start + chunk_tokens
+            digest = hashlib.sha256(data[start:end].tobytes()).hexdigest()
+            chunk_records.append((
+                digest,
+                {
+                    "path": path,
+                    "chunk_index": chunk_index,
+                    "source": item.get("source", "unknown"),
+                    "subset": item.get("subset", "unknown"),
+                    "artifact_split": item.get("artifact_split", "unknown"),
+                },
+            ))
+        del data
+        if target_seen is not None:
+            for digest, current in chunk_records:
+                target_seen[digest] = current
+        return chunk_records
+
+    for item in selected_train:
+        chunk_records = _scan_item_chunks(item)
+        if not chunk_records:
+            continue
+        report["artifacts_inspected"] += 1
+        for digest, current in chunk_records:
+            source = str(current.get("source", "unknown"))
+            report["chunks_inspected"] += 1
+            report["inspected_chunks_by_source"][source] = (
+                report["inspected_chunks_by_source"].get(source, 0) + 1
+            )
+            previous = seen.get(digest)
+            if previous is not None:
+                report["duplicate_chunks"] += 1
+                report["duplicates_by_source"][source] = (
+                    report["duplicates_by_source"].get(source, 0) + 1
+                )
+                if len(report["duplicate_examples"]) < 10:
+                    report["duplicate_examples"].append({
+                        "sha256": digest,
+                        "first_seen": previous,
+                        "duplicate": current,
+                    })
+            else:
+                seen[digest] = current
+
+    if report["chunks_inspected"]:
+        report["duplicate_ratio"] = round(
+            report["duplicate_chunks"] / report["chunks_inspected"],
+            8,
+        )
+        report["chunks_coverage_ratio"] = round(
+            report["chunks_inspected"] / max(1, total_available_chunks),
+            8,
+        )
+    report["full_exact_chunk_scan"] = (
+        report["selected_train_artifact_count"] == report["eligible_train_artifact_count"]
+        and report["chunks_inspected"] == total_available_chunks
+    )
+    report["scope"] = (
+        "full_exact_chunk_scan"
+        if report["full_exact_chunk_scan"]
+        else "bounded_exact_chunk_sample"
+    )
+
+    if include_validation_overlap and seen:
+        overlap_report = report["train_val_exact_overlap"]
+        for item in eligible_validation[:max_artifacts]:
+            chunk_records = _scan_item_chunks(item)
+            if not chunk_records:
+                continue
+            overlap_report["validation_artifacts_inspected"] += 1
+            for digest, current in chunk_records:
+                overlap_report["validation_chunks_inspected"] += 1
+                previous = seen.get(digest)
+                if previous is not None:
+                    overlap_report["overlap_chunks"] += 1
+                    if len(overlap_report["overlap_examples"]) < 10:
+                        overlap_report["overlap_examples"].append({
+                            "sha256": digest,
+                            "train_chunk": previous,
+                            "validation_chunk": current,
+                        })
+        if overlap_report["validation_chunks_inspected"]:
+            overlap_report["overlap_ratio"] = round(
+                overlap_report["overlap_chunks"] / overlap_report["validation_chunks_inspected"],
+                8,
+            )
+
+    report["ok"] = report["artifacts_inspected"] > 0
+    return report
+
+
+def build_benchmark_source_risk_report(
+    *,
+    manifest_path: str = TOKEN_ARTIFACT_MANIFEST_PATH,
+) -> dict:
+    """Report benchmark-source artifacts; do not claim text contamination scan."""
+    configured = set(getattr(train_cfg, "excluded_benchmark_sources", ()))
+    report = {
+        "schema": "benchmark_source_risk_v1",
+        "ok": False,
+        "manifest_path": manifest_path,
+        "configured_benchmark_exclusions": sorted(configured),
+        "configured_benchmark_exclusion_count": len(configured),
+        "local_artifacts_checked": 0,
+        "local_unique_sources_checked": [],
+        "artifact_matches": [],
+        "source_artifact_risk_count": 0,
+        "source_level_risk": {
+            "method": "exact_source_identifier_match",
+            "status": "not_run",
+            "risk_artifact_count": 0,
+            "risk_source_count": 0,
+            "claim": "source_level_risk_only",
+        },
+        "content_level_overlap": {
+            "method": "none",
+            "status": "unverified_no_local_benchmark_text_or_hashes",
+            "overlap_count": None,
+            "claim": "unverified",
+        },
+        "content_overlap_status": "unverified_no_local_benchmark_text_or_hashes",
+        "contamination_claim": "none",
+        "limitations": [
+            "This only checks whether local token artifacts come from configured benchmark source IDs.",
+            "It does not compare benchmark examples, n-grams, hashes, or generated outputs.",
+            "Source-level risk is not content-level contamination detection.",
+        ],
+        "errors": [],
+    }
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"manifest_load_failed: {exc}")
+        return report
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        report["errors"].append("manifest artifacts field is missing or not a list")
+        return report
+
+    unique_sources = set()
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source", "unknown"))
+        unique_sources.add(source)
+        report["local_artifacts_checked"] += 1
+        if source in configured:
+            report["artifact_matches"].append({
+                "source": source,
+                "subset": item.get("subset"),
+                "artifact_split": item.get("artifact_split"),
+                "path": item.get("path"),
+                "token_count": item.get("token_count"),
+            })
+    report["source_artifact_risk_count"] = len(report["artifact_matches"])
+    report["local_unique_sources_checked"] = sorted(unique_sources)
+    risk_sources = sorted({item["source"] for item in report["artifact_matches"]})
+    report["source_level_risk"] = {
+        "method": "exact_source_identifier_match",
+        "status": "checked",
+        "risk_artifact_count": len(report["artifact_matches"]),
+        "risk_source_count": len(risk_sources),
+        "risk_sources": risk_sources,
+        "claim": "source_level_risk_only",
+    }
+    report["ok"] = True
+    return report
+
+
+def build_data_governance_report() -> dict:
+    source_manifest = build_dataset_source_manifest()
+    dedup = build_exact_chunk_dedup_report()
+    benchmark_risk = build_benchmark_source_risk_report()
+    summary = {
+        "legal_clearance_claim": "none",
+        "license_known_count": source_manifest.get("known_license_count", 0),
+        "documented_license_count": source_manifest.get("documented_license_count", 0),
+        "license_unknown_count": source_manifest.get("unknown_license_count", 0),
+        "manual_metadata_coverage_ratio": source_manifest.get("manual_metadata", {}).get(
+            "coverage_ratio",
+            0.0,
+        ),
+        "repo_policy_status_counts": source_manifest.get(
+            "repo_policy_status_counts",
+            {},
+        ),
+        "training_blocker_level_counts": source_manifest.get(
+            "training_blocker_level_counts",
+            {},
+        ),
+        "serious_training_blocked_by_policy": source_manifest.get(
+            "serious_training_blocked_by_policy",
+            True,
+        ),
+        "active_hard_blocker_count": source_manifest.get(
+            "active_hard_blocker_count",
+            0,
+        ),
+        "allowed_by_repo_policy_count": len(
+            source_manifest.get("allowed_by_repo_policy_sources", [])
+        ),
+        "declared_license_counts": source_manifest.get("declared_license_counts", {}),
+        "governance_classification_counts": source_manifest.get(
+            "governance_classification_counts",
+            {},
+        ),
+        "dedup_scope": dedup.get("scope", "unknown"),
+        "dedup_chunks_inspected": dedup.get("chunks_inspected", 0),
+        "dedup_duplicate_ratio": dedup.get("duplicate_ratio", 0.0),
+        "train_val_exact_overlap_chunks": dedup.get(
+            "train_val_exact_overlap",
+            {},
+        ).get("overlap_chunks", 0),
+        "source_level_risk_artifacts": benchmark_risk.get(
+            "source_level_risk",
+            {},
+        ).get("risk_artifact_count", 0),
+        "content_level_contamination_status": benchmark_risk.get(
+            "content_level_overlap",
+            {},
+        ).get("status", "unknown"),
+        "contamination_claim": "none",
+        "training_readiness_changed": "no",
+    }
+    return {
+        "schema": "data_governance_evidence_v1",
+        "ok": bool(source_manifest["ok"] and dedup["ok"] and benchmark_risk["ok"]),
+        "summary": summary,
+        "source_manifest": source_manifest,
+        "exact_dedup": dedup,
+        "benchmark_source_risk": benchmark_risk,
+        "quality_claim": "none",
+        "legal_clearance_claim": "none",
+        "contamination_claim": "none",
+    }
 
 
 def disk_gb(d):

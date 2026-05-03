@@ -15,7 +15,7 @@
 
 - Date: 2026-03-31
 - Scope: Full read-through of all in-repo Python modules (excluding `.venv`).
-- Module count: 48 Python modules.
+- Module count: 61 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -32,6 +32,17 @@
 - `status` must route training through `train-preflight`; direct `train` recommendation before preflight is misleading.
 - `token-manifest` reconstructs local token artifact metadata from `.bin` files only. It does not reconstruct licensing, filtering, deduplication, shuffle, or contamination provenance.
 - `deps`, `token-integrity`, and `validate-real-path` provide machine-readable readiness evidence. `validate-real-path` performs a tiny real-token smoke path only and makes no model-quality claim.
+
+### Hard-evidence blocker update
+
+- Date: 2026-04-19
+- Scope: hardware-readiness reporting, data-governance evidence, bounded exact dedup evidence, source-level benchmark-risk reporting, and short multi-step real-token validation.
+- `hardware-validate` reports current-machine CUDA/device/dtype evidence and runs only the strongest safe narrow validation available. It distinguishes system GPU visibility through `nvidia-smi` from actual PyTorch CUDA usability; CPU-only or system-GPU-only evidence does not prove GPU readiness.
+- `gpu-fit-validate` reports a bounded RTX 2050/4GB constrained-fit matrix through the repo-local `.venv` interpreter. Passing reduced configs classifies the hardware as validation-only for the current repo target, not pretraining-ready.
+- `data-governance` emits source registry/category evidence, license-status evidence, exact token-chunk duplicate evidence with explicit scan coverage, bounded train/validation exact-overlap evidence, and source-level benchmark-risk evidence. It does not claim legal clearance, near-deduplication, semantic deduplication, or content contamination detection.
+- `data_governance/source_license_metadata.json` is a manual repo-side source governance layer. It documents current review status, repo policy status, and training blocker level only; it is not legal advice, not legal clearance, and currently leaves all declared licenses as `unknown`.
+- `validate-short-run` runs a bounded multi-step real-token train/resume/checkpoint/eval-gate validation path. It is not pretraining and makes no model-quality claim.
+- Real pretraining readiness remains controlled by `train-preflight`; validation reports do not override preflight.
 
 ---
 
@@ -75,12 +86,13 @@
 - `train.py`
 - `train_tokenizer.py`
 
-#### core/ (10)
+#### core/ (11)
 
 - `core/__init__.py`
 - `core/checkpoint_io.py`
 - `core/config_manager.py`
 - `core/config_schema.py`
+- `core/dependency_checks.py`
 - `core/hardware_optim.py`
 - `core/logging.py`
 - `core/lr_schedule.py`
@@ -130,10 +142,22 @@
 
 - `serving/server.py`
 
-#### tests/ (2)
+#### tests/ (14)
 
+- `tests/test_audit_truthfulness.py`
+- `tests/test_cli_truthfulness.py`
+- `tests/test_config_profiles.py`
 - `tests/test_core_lr_schedule.py`
 - `tests/test_core_sequence_ops.py`
+- `tests/test_data_token_truthfulness.py`
+- `tests/test_deployment_profiles.py`
+- `tests/test_eval_integrity.py`
+- `tests/test_hard_evidence.py`
+- `tests/test_kv_cache.py`
+- `tests/test_model_shapes.py`
+- `tests/test_quantization_truthfulness.py`
+- `tests/test_serving_truthfulness.py`
+- `tests/test_training_safety.py`
 
 ---
 
@@ -185,7 +209,11 @@ Primary architectural planes:
 - `token-manifest`
 - `token-integrity`
 - `deps`
+- `hardware-validate`
+- `gpu-fit-validate`
+- `data-governance`
 - `validate-real-path`
+- `validate-short-run`
 - `train-preflight`
 - `deployment-info`
 - `train`
@@ -225,7 +253,11 @@ Primary architectural planes:
 - `token-manifest`: reconstructs a token artifact manifest from existing local token binaries with explicit reconstructed-provenance caveats
 - `token-integrity`: checks local token artifact sizes, token counts, split pairing, and labeled full-or-sampled hashes without claiming data quality
 - `deps`: checks the installed environment against the declared requirement file
+- `hardware-validate`: reports current-machine hardware evidence and runs a narrow CPU or CUDA validation step without claiming full training fit
+- `gpu-fit-validate`: runs a small bounded CUDA fit matrix on the repo-local `.venv` interpreter, records peak memory/checkpoint/resume evidence, and classifies 4GB RTX 2050 hardware as validation-only for the current target
+- `data-governance`: writes source/category/license-status, manual source metadata coverage, repo policy status, training blocker level, exact dedup scan coverage, bounded train/validation exact-overlap, and source-level benchmark-risk evidence without claiming legal clearance, near-deduplication, or content contamination detection
 - `validate-real-path`: runs a tiny real-token train/checkpoint/resume/eval-gate smoke path and writes a JSON report; it does not start pretraining or claim model quality
+- `validate-short-run`: runs a bounded multi-step real-token validation with checkpoint reload/resume and continuation; it is not pretraining
 - `train-preflight`: no-training readiness checks for declared dependency drift, config geometry, tokenizer loadability, local token cache/manifest presence, checkpoint directory expectations, dtype/device compatibility, and parameter-memory lower-bound reporting
 - `deployment-info`: read-only deployment tier metadata and lower-bound memory estimates; does not validate runtime deployment
 - `audit`: Pass 1 truthfulness checks covering compile, tokenizer smoke, status health, fake-serving detection, and quantization report integrity
@@ -612,7 +644,17 @@ The current data behavior is narrower:
 5. EOS append and token-cache materialization
 
 Current code does not implement MinHash, near-duplicate detection, PII removal,
-license classification, or content-level benchmark contamination detection.
+legal license clearance, or content-level benchmark contamination detection.
+`data-governance` classifies configured source IDs and reports unknown licenses
+truthfully; many active sources remain `needs_manual_review`.
+
+### 8.2.1 Manual source-license metadata
+
+- `data_governance/source_license_metadata.json` contains one record per configured source.
+- The metadata tracks source category/domain, declared license string when manually documented, license evidence source, review basis, governance classification, repo policy status, training blocker level, notes, and `legal_clearance_claim`.
+- `legal_clearance_claim` must remain `none`; `allowed_by_repo_policy` is not legal approval.
+- Current metadata is complete for source coverage but not license clearance: all declared licenses remain `unknown` until a real manual source-page or dataset-card review is recorded.
+- Current triage is intentionally conservative: unknown-license active sources are `blocked_pending_review` and `hard_blocker`; configured benchmark sources are `excluded` and `hard_blocker`.
 
 ### 8.3 Mixed dataset runtime phases
 
@@ -989,6 +1031,7 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `core/checkpoint_io.py`: secure load/save, hash sidecar and manifest integrity
 - `core/config_manager.py`: file/env layered config ingestion and hash snapshots
 - `core/config_schema.py`: strict Pydantic section models and cross-field constraints
+- `core/dependency_checks.py`: installed-version checks against `requirement.txt`
 - `core/hardware_optim.py`: profile detection and backend resolution policy
 - `core/lr_schedule.py`: cosine warmup LR helpers
 - `core/sequence_ops.py`: shared shifted CE and sequence log-prob math
@@ -1024,17 +1067,29 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 
 ### 15.6 Tests
 
+- `tests/test_audit_truthfulness.py`: Pass 1 audit truthfulness checks
+- `tests/test_cli_truthfulness.py`: CLI status/deps/report truthfulness checks
+- `tests/test_config_profiles.py`: model profile and legacy isolation checks
 - `tests/test_core_lr_schedule.py`: LR boundary and token-step equivalence checks
 - `tests/test_core_sequence_ops.py`: shifted CE/log-prob helper correctness checks
+- `tests/test_data_token_truthfulness.py`: token artifact manifest, source-exclusion, and tokenizer audit checks
+- `tests/test_deployment_profiles.py`: deployment tier honesty checks
+- `tests/test_eval_integrity.py`: eval checkpoint and benchmark-integrity checks
+- `tests/test_hard_evidence.py`: hardware, constrained GPU fit, governance, dedup, and short-validation evidence checks
+- `tests/test_kv_cache.py`: bounded local KV cache checks
+- `tests/test_model_shapes.py`: dense GQA model shape and generation checks
+- `tests/test_quantization_truthfulness.py`: quantization report contract checks
+- `tests/test_serving_truthfulness.py`: fail-closed serving checks
+- `tests/test_training_safety.py`: preflight, checkpoint, tiny train, and real-token validation checks
 
 ---
 
 ## 16. Dependency Contract (`requirement.txt`)
 
-- `torch>=2.4.0,<2.7.0`
-- `numpy>=1.26.4,<2.0.0`
-- `datasets>=2.20.0,<4.0.0`
-- `tokenizers>=0.20.3,<0.21.0`
+- `torch>=2.4.0,<2.9.0`
+- `numpy>=1.26.4,<3.0.0`
+- `datasets>=2.20.0,<5.0.0`
+- `tokenizers>=0.20.3,<0.23.0`
 - `regex>=2024.11.6,<2027.0`
 - `PyYAML>=6.0.2,<7.0.0`
 - `pydantic>=2.10.0,<3.0.0`

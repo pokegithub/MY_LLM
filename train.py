@@ -7,6 +7,7 @@ import json
 import hashlib
 import random
 import platform
+import subprocess
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -891,6 +892,1109 @@ def run_tiny_real_data_validation(
         "runtime_seconds": round(time.time() - started_at, 4),
         "quality_claim": "none",
         "capability_evidence": "none",
+    }
+
+
+def _cuda_device_reports() -> List[Dict[str, Any]]:
+    devices: List[Dict[str, Any]] = []
+    if not torch.cuda.is_available():
+        return devices
+    for index in range(torch.cuda.device_count()):
+        props = torch.cuda.get_device_properties(index)
+        devices.append({
+            "index": index,
+            "name": props.name,
+            "total_memory_gb": round(props.total_memory / (1024 ** 3), 3),
+            "capability": list(props.major_minor)
+            if hasattr(props, "major_minor")
+            else [props.major, props.minor],
+            "multi_processor_count": props.multi_processor_count,
+        })
+    return devices
+
+
+def _parse_nvidia_smi_csv(stdout: str) -> List[Dict[str, Any]]:
+    devices: List[Dict[str, Any]] = []
+    for index, line in enumerate(stdout.splitlines()):
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 4 or not parts[0]:
+            continue
+        memory_mib: Optional[int]
+        try:
+            memory_mib = int(float(parts[1]))
+        except ValueError:
+            memory_mib = None
+        devices.append({
+            "index": index,
+            "name": parts[0],
+            "total_memory_mib": memory_mib,
+            "total_memory_gb": (
+                round(memory_mib / 1024, 3) if memory_mib is not None else None
+            ),
+            "driver_version": parts[2],
+            "compute_capability": parts[3],
+        })
+    return devices
+
+
+def _nvidia_smi_report() -> Dict[str, Any]:
+    cmd = [
+        "nvidia-smi",
+        "--query-gpu=name,memory.total,driver_version,compute_cap",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {
+            "available": False,
+            "gpus": [],
+            "error": "nvidia-smi executable not found",
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "available": False,
+            "gpus": [],
+            "error": f"nvidia-smi timed out after {exc.timeout} seconds",
+        }
+
+    if proc.returncode != 0:
+        return {
+            "available": False,
+            "gpus": [],
+            "error": (proc.stderr or proc.stdout or "").strip()[:500],
+        }
+    devices = _parse_nvidia_smi_csv(proc.stdout)
+    return {
+        "available": bool(devices),
+        "gpus": devices,
+        "error": "",
+    }
+
+
+def _probe_cuda_tensor_ops() -> Dict[str, Any]:
+    report = {
+        "cuda_tensor_op_success": False,
+        "status": "not_run_cuda_unavailable",
+        "dtype_paths": {
+            "float32": "unverified_cuda_unavailable",
+            "float16": "unverified_cuda_unavailable",
+            "bfloat16": "unverified_cuda_unavailable",
+        },
+        "errors": {},
+    }
+    if not torch.cuda.is_available():
+        return report
+
+    report["status"] = "running"
+    dtype_map = {
+        "float32": torch.float32,
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+    }
+    for name, dtype in dtype_map.items():
+        if name == "bfloat16":
+            checker = getattr(torch.cuda, "is_bf16_supported", None)
+            if callable(checker) and not checker():
+                report["dtype_paths"][name] = "unavailable_not_supported"
+                continue
+        try:
+            x = torch.ones((2, 2), device="cuda", dtype=dtype)
+            y = (x + 1).sum()
+            if not torch.isfinite(y.detach().float()):
+                raise RuntimeError("non-finite CUDA tensor result")
+            torch.cuda.synchronize()
+            report["dtype_paths"][name] = "pass"
+        except torch.cuda.OutOfMemoryError as exc:
+            report["dtype_paths"][name] = "oom"
+            report["errors"][name] = str(exc)
+        except RuntimeError as exc:
+            report["dtype_paths"][name] = "fail"
+            report["errors"][name] = str(exc)
+
+    report["cuda_tensor_op_success"] = report["dtype_paths"]["float32"] == "pass"
+    report["status"] = "pass" if report["cuda_tensor_op_success"] else "fail"
+    return report
+
+
+def _classify_gpu_evidence(
+    *,
+    cuda_available: bool,
+    system_gpu_detected: bool,
+    tensor_op_success: bool,
+    validation: Optional[Dict[str, Any]],
+) -> str:
+    if not cuda_available and system_gpu_detected:
+        return "gpu_detected_but_unusable"
+    if not cuda_available:
+        return "gpu_unavailable"
+    if not tensor_op_success:
+        return "gpu_detected_but_unusable"
+    if not validation:
+        return "gpu_partial_unverified"
+    if validation.get("status") == "pass":
+        return "gpu_tiny_step_passed"
+    if validation.get("error_type") == "cuda_oom":
+        return "gpu_tiny_step_oom"
+    return "gpu_partial_unverified"
+
+
+def _repo_local_python_report(
+    *,
+    repo_root: Optional[str] = None,
+    executable: Optional[str] = None,
+) -> Dict[str, Any]:
+    root = os.path.abspath(repo_root or os.getcwd())
+    exe = os.path.abspath(executable or sys.executable)
+    candidates = [
+        os.path.abspath(os.path.join(root, ".venv", "Scripts", "python.exe")),
+        os.path.abspath(os.path.join(root, ".venv", "bin", "python")),
+    ]
+    normalized_exe = os.path.normcase(exe)
+    normalized_candidates = [os.path.normcase(path) for path in candidates]
+    return {
+        "executable": exe,
+        "expected_repo_local_candidates": candidates,
+        "is_repo_local_venv": normalized_exe in normalized_candidates,
+        "source_of_truth": os.path.abspath(
+            os.path.join(root, ".venv", "Scripts", "python.exe")
+        ),
+    }
+
+
+def _cuda_dtype_supported(dtype_name: str) -> bool:
+    if dtype_name == "float32":
+        return torch.cuda.is_available()
+    if dtype_name == "float16":
+        return torch.cuda.is_available()
+    if dtype_name == "bfloat16":
+        checker = getattr(torch.cuda, "is_bf16_supported", None)
+        return bool(torch.cuda.is_available() and callable(checker) and checker())
+    return False
+
+
+def _preferred_cuda_validation_dtype() -> str:
+    return "bfloat16" if _cuda_dtype_supported("bfloat16") else "float16"
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or (
+        "out of memory" in str(exc).lower()
+    )
+
+
+def _classify_gpu_fit_attempt(attempt: Dict[str, Any]) -> str:
+    if attempt.get("error_type") == "cuda_oom":
+        return "does_not_fit"
+    if attempt.get("status") == "pass":
+        if (
+            attempt.get("forward_passed")
+            and attempt.get("backward_optimizer_passed")
+            and attempt.get("checkpoint_write_passed")
+            and attempt.get("resume_reload_passed")
+        ):
+            return "fits_mechanics_only"
+        return "partially_unverified"
+    if str(attempt.get("status", "")).startswith("skipped"):
+        return "partially_unverified"
+    return "partially_unverified"
+
+
+def _gpu_fit_matrix_candidates() -> List[Dict[str, Any]]:
+    preferred = _preferred_cuda_validation_dtype()
+    return [
+        {
+            "name": "micro_fp16_64d_2l_s16",
+            "dtype_name": "float16",
+            "dim": 64,
+            "n_layers": 2,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "ffn_dim": 128,
+            "seq_len": 16,
+            "batch_size": 1,
+        },
+        {
+            "name": "micro_bf16_64d_2l_s16",
+            "dtype_name": "bfloat16",
+            "dim": 64,
+            "n_layers": 2,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "ffn_dim": 128,
+            "seq_len": 16,
+            "batch_size": 1,
+        },
+        {
+            "name": f"short_{preferred}_96d_3l_s32",
+            "dtype_name": preferred,
+            "dim": 96,
+            "n_layers": 3,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "ffn_dim": 192,
+            "seq_len": 32,
+            "batch_size": 1,
+        },
+        {
+            "name": f"bounded_{preferred}_128d_4l_s64",
+            "dtype_name": preferred,
+            "dim": 128,
+            "n_layers": 4,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "ffn_dim": 256,
+            "seq_len": 64,
+            "batch_size": 1,
+        },
+        {
+            "name": f"upper_tiny_{preferred}_192d_6l_s64",
+            "dtype_name": preferred,
+            "dim": 192,
+            "n_layers": 6,
+            "n_heads": 6,
+            "n_kv_heads": 2,
+            "ffn_dim": 512,
+            "seq_len": 64,
+            "batch_size": 1,
+        },
+    ]
+
+
+def _validation_model_config(
+    *,
+    vocab_size: int,
+    seq_len: int,
+    overrides: Dict[str, Any],
+) -> ModelConfig:
+    from config import EDGE_0_5B_GQA, build_model_config
+
+    cfg_values = {
+        "vocab_size": int(vocab_size),
+        "dim": int(overrides["dim"]),
+        "n_layers": int(overrides["n_layers"]),
+        "n_heads": int(overrides["n_heads"]),
+        "n_kv_heads": int(overrides["n_kv_heads"]),
+        "ffn_dim": int(overrides["ffn_dim"]),
+        "max_seq_len": max(int(overrides.get("max_seq_len", seq_len)), int(seq_len), 32),
+        "sliding_window": min(int(overrides.get("sliding_window", 16)), int(seq_len)),
+        "use_flashattention": False,
+        "attention_backend": "sdpa",
+    }
+    return build_model_config(EDGE_0_5B_GQA, **cfg_values)
+
+
+def _model_config_payload(cfg: ModelConfig) -> Dict[str, Any]:
+    return {
+        "profile_name": cfg.profile_name,
+        "vocab_size": cfg.vocab_size,
+        "dim": cfg.dim,
+        "n_layers": cfg.n_layers,
+        "n_heads": cfg.n_heads,
+        "n_kv_heads": cfg.n_kv_heads,
+        "ffn_dim": cfg.ffn_dim,
+        "max_seq_len": cfg.max_seq_len,
+        "sliding_window": cfg.sliding_window,
+    }
+
+
+def _run_gpu_fit_attempt(
+    *,
+    candidate: Dict[str, Any],
+    vocab_size: int,
+    checkpoint_root: str,
+    seed: int,
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "name": candidate["name"],
+        "device": "cuda",
+        "dtype_requested": candidate["dtype_name"],
+        "batch_size": int(candidate["batch_size"]),
+        "seq_len": int(candidate["seq_len"]),
+        "config_override": {
+            key: candidate[key]
+            for key in ("dim", "n_layers", "n_heads", "n_kv_heads", "ffn_dim")
+        },
+        "forward_passed": False,
+        "backward_optimizer_passed": False,
+        "checkpoint_write_passed": False,
+        "resume_reload_passed": False,
+        "quality_claim": "none",
+    }
+    dtype_name = str(candidate["dtype_name"])
+    if not torch.cuda.is_available():
+        result.update({
+            "status": "skipped_cuda_unavailable",
+            "fit_classification": "partially_unverified",
+            "error": "CUDA is unavailable to PyTorch.",
+        })
+        return result
+    if not _cuda_dtype_supported(dtype_name):
+        result.update({
+            "status": f"skipped_{dtype_name}_unavailable",
+            "fit_classification": "partially_unverified",
+            "error": f"{dtype_name} is not supported by this CUDA path.",
+        })
+        return result
+
+    started_at = time.time()
+    set_training_seed(seed, deterministic=False)
+    device = torch.device("cuda")
+    attempt_dir = os.path.join(checkpoint_root, candidate["name"])
+    os.makedirs(attempt_dir, exist_ok=True)
+    for name in os.listdir(attempt_dir):
+        if name.endswith(".pt") or name.endswith(".pt.sha256"):
+            os.remove(os.path.join(attempt_dir, name))
+
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats(device)
+    memory_before = torch.cuda.memory_allocated(device)
+    memory_reserved_before = torch.cuda.memory_reserved(device)
+    try:
+        cfg = _validation_model_config(
+            vocab_size=vocab_size,
+            seq_len=int(candidate["seq_len"]),
+            overrides=candidate,
+        )
+        result["model_config"] = _model_config_payload(cfg)
+        validation_cfg = TrainConfig(
+            checkpoint_dir=attempt_dir,
+            batch_size=int(candidate["batch_size"]),
+            seq_len=int(candidate["seq_len"]),
+            grad_accum=1,
+            dtype=dtype_name,
+            total_tokens=int(candidate["batch_size"]) * int(candidate["seq_len"]),
+            warmup_tokens=4,
+            curriculum_tokens=int(candidate["batch_size"]) * int(candidate["seq_len"]),
+            compile_model=False,
+            data_num_workers=0,
+            data_persistent_workers=False,
+            data_pin_memory=False,
+            device_non_blocking=False,
+        )
+        model = LLM(cfg).to(device).train()
+        opt = build_adamw(
+            model,
+            OptimizerSettings(lr=1e-3, weight_decay=0.0, use_fused=False),
+        )
+        amp = build_amp_policy(
+            AmpPolicySettings(
+                dtype_name=dtype_name,
+                device_type="cuda",
+                use_grad_scaler=(dtype_name == "float16"),
+            )
+        )
+        ids = torch.randint(
+            0,
+            cfg.vocab_size,
+            (int(candidate["batch_size"]), int(candidate["seq_len"])),
+            device=device,
+        )
+        targets = torch.randint(
+            0,
+            cfg.vocab_size,
+            (int(candidate["batch_size"]), int(candidate["seq_len"])),
+            device=device,
+        )
+        with amp.autocast():
+            out = model(ids, targets=targets)
+        if not isinstance(out, LossOutput) or not torch.isfinite(out.total_loss.detach()):
+            raise TrainingPreflightError("GPU fit attempt produced invalid loss")
+        result["forward_passed"] = True
+        amp.backward(out.total_loss)
+        grad_norm = amp.clip_grad_norm_(opt, model.parameters(), 1.0)
+        if not torch.isfinite(torch.tensor(float(grad_norm))):
+            raise TrainingPreflightError("GPU fit attempt produced invalid grad norm")
+        amp.step(opt)
+        amp.update()
+        opt.zero_grad()
+        torch.cuda.synchronize(device)
+        result["backward_optimizer_passed"] = True
+        result["loss"] = float(out.total_loss.detach().cpu().item())
+        result["grad_norm"] = float(grad_norm)
+        result["amp_dtype_used"] = str(amp.dtype).replace("torch.", "")
+        result["grad_scaler_used"] = amp.uses_grad_scaler
+
+        save_ckpt(
+            model,
+            opt,
+            step=1,
+            loss=result["loss"],
+            cfg=validation_cfg,
+            master=True,
+            tag="_gpu_fit",
+        )
+        checkpoint_path = os.path.join(attempt_dir, "step_0000001_gpu_fit.pt")
+        result["checkpoint_path"] = checkpoint_path
+        result["checkpoint_write_passed"] = os.path.isfile(checkpoint_path)
+        restored = LLM(cfg).to(device).train()
+        restored_opt = build_adamw(
+            restored,
+            OptimizerSettings(lr=1e-3, weight_decay=0.0, use_fused=False),
+        )
+        resumed_step = load_ckpt(restored, restored_opt, validation_cfg, device=0)
+        result["resumed_step"] = int(resumed_step)
+        result["resume_reload_passed"] = resumed_step == 1
+        torch.cuda.synchronize(device)
+        result["status"] = "pass"
+    except (RuntimeError, ValueError, TrainingPreflightError) as exc:
+        result["status"] = "fail"
+        result["error_type"] = "cuda_oom" if _is_cuda_oom(exc) else "runtime_error"
+        result["error"] = str(exc)[:1000]
+    finally:
+        if torch.cuda.is_available():
+            result["memory_allocated_before_bytes"] = memory_before
+            result["memory_reserved_before_bytes"] = memory_reserved_before
+            result["memory_allocated_after_bytes"] = torch.cuda.memory_allocated(device)
+            result["memory_reserved_after_bytes"] = torch.cuda.memory_reserved(device)
+            result["memory_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(device)
+            result["memory_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(device)
+            result["peak_allocated_gb"] = round(
+                result["memory_peak_allocated_bytes"] / (1024 ** 3),
+                4,
+            )
+            result["peak_reserved_gb"] = round(
+                result["memory_peak_reserved_bytes"] / (1024 ** 3),
+                4,
+            )
+            torch.cuda.empty_cache()
+        result["runtime_seconds"] = round(time.time() - started_at, 4)
+
+    result["fit_classification"] = _classify_gpu_fit_attempt(result)
+    return result
+
+
+def _default_training_fit_report() -> Dict[str, Any]:
+    preflight = run_training_preflight()
+    memory_checks = [
+        item for item in preflight["checks"] if item.get("name") == "memory_lower_bound"
+    ]
+    memory_check = memory_checks[0] if memory_checks else None
+    return {
+        "fit_classification": "does_not_fit"
+        if memory_check and memory_check.get("status") == "fail"
+        else "partially_unverified",
+        "preflight_ready_for_training": bool(preflight["ready_for_training"]),
+        "memory_lower_bound_status": (
+            memory_check.get("status") if memory_check else "unknown"
+        ),
+        "memory_lower_bound_detail": (
+            memory_check.get("detail") if memory_check else "unknown"
+        ),
+        "evidence": "train-preflight",
+    }
+
+
+def run_gpu_constrained_fit_validation(
+    *,
+    checkpoint_root: str = "./run_artifacts/gpu_constrained_fit",
+    tokenizer_path: str = "./tokenizer_data",
+    token_cache_dir: str = TOKEN_CACHE_DIR,
+    matrix_candidates: Optional[List[Dict[str, Any]]] = None,
+    run_short_validation: bool = True,
+    seed: int = 777,
+) -> Dict[str, Any]:
+    """Measure bounded GPU fit on constrained hardware without claiming training readiness."""
+    started_at = time.time()
+    interpreter = _repo_local_python_report()
+    nvidia_smi = _nvidia_smi_report()
+    cuda_available = bool(torch.cuda.is_available())
+    devices = _cuda_device_reports()
+    detected_vram_gb = None
+    if nvidia_smi.get("gpus"):
+        detected_vram_gb = nvidia_smi["gpus"][0].get("total_memory_gb")
+    elif devices:
+        detected_vram_gb = devices[0].get("total_memory_gb")
+
+    report: Dict[str, Any] = {
+        "schema": "gpu_constrained_fit_validation_v1",
+        "ok": True,
+        "interpreter": interpreter,
+        "torch_version": torch.__version__,
+        "torch_cuda_runtime": getattr(torch.version, "cuda", None),
+        "cuda_available": cuda_available,
+        "cuda_device_count": torch.cuda.device_count() if cuda_available else 0,
+        "cuda_devices": devices,
+        "nvidia_smi": nvidia_smi,
+        "gpu_name": devices[0]["name"] if devices else None,
+        "detected_total_vram_gb": detected_vram_gb,
+        "vram_class": "4gb_constrained"
+        if detected_vram_gb and detected_vram_gb <= 4.5
+        else "unknown_or_larger",
+        "preferred_dtype": _preferred_cuda_validation_dtype()
+        if cuda_available
+        else "unverified_cuda_unavailable",
+        "hardware_classification": "validation_only_for_current_repo_target",
+        "matrix": [],
+        "smallest_fitting_config": None,
+        "strongest_fitting_config": None,
+        "failed_configs": [],
+        "short_validation": None,
+        "default_training_fit": None,
+        "pretraining_readiness_changed": "no",
+        "quality_claim": "none",
+        "limitations": [
+            "This command tests bounded validation configs only; it is not pretraining.",
+            "A fitting reduced config does not prove the intended training config fits.",
+            "4GB VRAM should be treated as validation-only for the current repo target.",
+        ],
+    }
+
+    if not interpreter["is_repo_local_venv"]:
+        report["ok"] = False
+        report["status"] = "wrong_interpreter"
+        report["limitations"].append(
+            "Validation must be run with the repo-local .venv Python interpreter."
+        )
+        return report
+    if not cuda_available:
+        report["ok"] = False
+        report["status"] = "cuda_unavailable"
+        report["limitations"].append("PyTorch cannot use CUDA in this interpreter.")
+        return report
+
+    tok = BPETokenizer()
+    tok.load(tokenizer_path)
+    os.makedirs(checkpoint_root, exist_ok=True)
+    candidates = matrix_candidates or _gpu_fit_matrix_candidates()
+    for index, candidate in enumerate(candidates):
+        attempt = _run_gpu_fit_attempt(
+            candidate=candidate,
+            vocab_size=tok.vocab_size_,
+            checkpoint_root=os.path.join(checkpoint_root, "matrix"),
+            seed=seed + index,
+        )
+        report["matrix"].append(attempt)
+
+    fitting = [
+        attempt
+        for attempt in report["matrix"]
+        if attempt.get("fit_classification") == "fits_mechanics_only"
+    ]
+    if fitting:
+        report["smallest_fitting_config"] = fitting[0]["name"]
+        report["strongest_fitting_config"] = fitting[-1]["name"]
+    report["failed_configs"] = [
+        attempt["name"]
+        for attempt in report["matrix"]
+        if attempt.get("fit_classification") == "does_not_fit"
+    ]
+
+    if fitting and run_short_validation:
+        strongest = fitting[-1]
+        overrides = {
+            **strongest["config_override"],
+            "max_seq_len": max(int(strongest["seq_len"]), 32),
+            "sliding_window": min(16, int(strongest["seq_len"])),
+        }
+        try:
+            torch.cuda.empty_cache()
+            short = run_short_real_data_validation(
+                token_cache_dir=token_cache_dir,
+                tokenizer_path=tokenizer_path,
+                checkpoint_dir=os.path.join(checkpoint_root, "short_real_token_validation"),
+                seq_len=int(strongest["seq_len"]),
+                pre_resume_steps=2,
+                post_resume_steps=1,
+                seed=seed + 100,
+                deterministic=False,
+                model_overrides=overrides,
+                force_device_type="cuda",
+            )
+            short["fit_classification"] = "fits_short_validation"
+            short["chosen_from_matrix"] = strongest["name"]
+            report["short_validation"] = short
+        except (RuntimeError, ValueError, OSError, TrainingPreflightError) as exc:
+            report["short_validation"] = {
+                "ok": False,
+                "chosen_from_matrix": strongest["name"],
+                "fit_classification": "does_not_fit"
+                if _is_cuda_oom(exc)
+                else "partially_unverified",
+                "error_type": "cuda_oom" if _is_cuda_oom(exc) else "runtime_error",
+                "error": str(exc)[:1000],
+                "quality_claim": "none",
+            }
+
+    report["default_training_fit"] = _default_training_fit_report()
+    report["runtime_seconds"] = round(time.time() - started_at, 4)
+    if not fitting:
+        report["ok"] = False
+        report["status"] = "no_bounded_gpu_config_fit"
+    else:
+        report["status"] = "bounded_gpu_validation_evidence_collected"
+    return report
+
+
+def _run_device_step_validation(
+    *,
+    device_type: str,
+    dtype_name: str,
+    seq_len: int = 16,
+    seed: int = 444,
+) -> Dict[str, Any]:
+    from config import EDGE_0_5B_GQA, build_model_config
+
+    started_at = time.time()
+    set_training_seed(seed, deterministic=(device_type == "cpu"))
+    device = torch.device(device_type)
+    cfg = build_model_config(
+        EDGE_0_5B_GQA,
+        vocab_size=512,
+        dim=64,
+        n_layers=2,
+        n_heads=4,
+        n_kv_heads=2,
+        ffn_dim=128,
+        max_seq_len=max(32, seq_len),
+        sliding_window=8,
+    )
+    model = LLM(cfg).to(device).train()
+    opt = build_adamw(
+        model,
+        OptimizerSettings(lr=1e-3, weight_decay=0.0, use_fused=False),
+    )
+    amp = build_amp_policy(
+        AmpPolicySettings(
+            dtype_name=dtype_name,
+            device_type=device_type,
+            use_grad_scaler=(device_type == "cuda" and dtype_name == "float16"),
+        )
+    )
+
+    memory_before: Optional[int] = None
+    memory_after: Optional[int] = None
+    memory_peak: Optional[int] = None
+    if device_type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+        memory_before = torch.cuda.memory_allocated(device)
+
+    ids = torch.randint(0, cfg.vocab_size, (1, seq_len), device=device)
+    targets = torch.randint(0, cfg.vocab_size, (1, seq_len), device=device)
+    with amp.autocast():
+        out = model(ids, targets=targets)
+    if not isinstance(out, LossOutput) or not torch.isfinite(out.total_loss.detach()):
+        raise TrainingPreflightError("hardware validation produced invalid loss")
+    amp.backward(out.total_loss)
+    grad_norm = amp.clip_grad_norm_(opt, model.parameters(), 1.0)
+    if not torch.isfinite(torch.tensor(float(grad_norm))):
+        raise TrainingPreflightError("hardware validation produced invalid grad norm")
+    amp.step(opt)
+    amp.update()
+    opt.zero_grad()
+
+    if device_type == "cuda":
+        memory_after = torch.cuda.memory_allocated(device)
+        memory_peak = torch.cuda.max_memory_allocated(device)
+
+    return {
+        "status": "pass",
+        "device_type": device_type,
+        "dtype_requested": dtype_name,
+        "amp_dtype_used": str(amp.dtype).replace("torch.", ""),
+        "grad_scaler_used": amp.uses_grad_scaler,
+        "device_placement": "pass",
+        "amp_step": "pass",
+        "compile_attempted": False,
+        "compile_status": "not_attempted_in_evidence_pass",
+        "loss": float(out.total_loss.detach().cpu().item()),
+        "grad_norm": float(grad_norm),
+        "memory_allocated_before_bytes": memory_before,
+        "memory_allocated_after_bytes": memory_after,
+        "memory_peak_allocated_bytes": memory_peak,
+        "runtime_seconds": round(time.time() - started_at, 4),
+        "quality_claim": "none",
+    }
+
+
+def run_hardware_readiness_validation() -> Dict[str, Any]:
+    """Collect current-machine hardware evidence without inferring readiness."""
+    nvidia_smi = _nvidia_smi_report()
+    system_gpu_detected = bool(nvidia_smi.get("gpus"))
+    cuda_available = bool(torch.cuda.is_available())
+    cuda_version = getattr(torch.version, "cuda", None)
+    cudnn_available = bool(torch.backends.cudnn.is_available())
+    bf16_supported = False
+    if cuda_available:
+        checker = getattr(torch.cuda, "is_bf16_supported", None)
+        bf16_supported = bool(checker()) if callable(checker) else False
+    tensor_ops = _probe_cuda_tensor_ops()
+    detected_vram_gb = None
+    if nvidia_smi.get("gpus"):
+        detected_vram_gb = nvidia_smi["gpus"][0].get("total_memory_gb")
+
+    report: Dict[str, Any] = {
+        "schema": "hardware_readiness_v1",
+        "ok": True,
+        "torch_version": torch.__version__,
+        "torch_cuda_runtime": cuda_version,
+        "torch_build_has_cuda_runtime": cuda_version is not None,
+        "cudnn_available": cudnn_available,
+        "cuda_available": cuda_available,
+        "cuda_device_count": torch.cuda.device_count() if cuda_available else 0,
+        "cuda_devices": _cuda_device_reports(),
+        "nvidia_smi": nvidia_smi,
+        "system_gpu_detected": system_gpu_detected,
+        "cuda_bf16_supported": bf16_supported,
+        "cuda_fp16_supported": cuda_available,
+        "gpu_tensor_ops": tensor_ops,
+        "gpu_result_classification": "unknown",
+        "hardware_ready_for_training": False,
+        "training_readiness_claim": "none",
+        "quality_claim": "none",
+        "evidence_level": "system_gpu_only_pytorch_cuda_unavailable"
+        if system_gpu_detected and not cuda_available
+        else ("cpu_only" if not cuda_available else "cuda_single_step"),
+        "validation": None,
+        "rtx_2050_4gb_realism": {
+            "target_gpu_class": "NVIDIA GeForce RTX 2050 laptop GPU",
+            "detected_total_vram_gb": detected_vram_gb,
+            "vram_class": "4gb_constrained" if detected_vram_gb and detected_vram_gb <= 4.5 else "unknown_or_larger",
+            "default_training_path_ready": False,
+            "tiny_gpu_mechanics_only": False,
+            "fit_claim": "none",
+        },
+        "limitations": [],
+    }
+
+    if not cuda_available:
+        if system_gpu_detected:
+            report["limitations"].append(
+                "NVIDIA hardware is visible to nvidia-smi, but current PyTorch is not CUDA-enabled."
+            )
+        report["limitations"].append(
+            "CUDA is not available in this environment; GPU readiness is unverified."
+        )
+        report["validation"] = _run_device_step_validation(
+            device_type="cpu",
+            dtype_name="bfloat16",
+        )
+        report["gpu_result_classification"] = _classify_gpu_evidence(
+            cuda_available=False,
+            system_gpu_detected=system_gpu_detected,
+            tensor_op_success=False,
+            validation=report["validation"],
+        )
+        return report
+
+    dtype_name = "bfloat16" if bf16_supported else "float16"
+    try:
+        report["validation"] = _run_device_step_validation(
+            device_type="cuda",
+            dtype_name=dtype_name,
+        )
+    except (RuntimeError, ValueError, TrainingPreflightError) as exc:
+        error_type = (
+            "cuda_oom"
+            if isinstance(exc, torch.cuda.OutOfMemoryError)
+            or "out of memory" in str(exc).lower()
+            else "runtime_error"
+        )
+        report["ok"] = False
+        report["validation"] = {
+            "status": "fail",
+            "device_type": "cuda",
+            "dtype_requested": dtype_name,
+            "error_type": error_type,
+            "error": str(exc),
+        }
+        report["gpu_result_classification"] = _classify_gpu_evidence(
+            cuda_available=True,
+            system_gpu_detected=system_gpu_detected,
+            tensor_op_success=bool(tensor_ops.get("cuda_tensor_op_success")),
+            validation=report["validation"],
+        )
+        report["limitations"].append(
+            "CUDA exists but the narrow validation step failed."
+        )
+        return report
+
+    report["hardware_ready_for_training"] = False
+    report["rtx_2050_4gb_realism"]["tiny_gpu_mechanics_only"] = True
+    report["rtx_2050_4gb_realism"]["fit_claim"] = (
+        "tiny validation fit only; production/default training fit is unverified"
+    )
+    report["gpu_result_classification"] = _classify_gpu_evidence(
+        cuda_available=True,
+        system_gpu_detected=system_gpu_detected,
+        tensor_op_success=bool(tensor_ops.get("cuda_tensor_op_success")),
+        validation=report["validation"],
+    )
+    report["limitations"].append(
+        "A single CUDA validation step is not proof that full pretraining fits or is stable."
+    )
+    if detected_vram_gb and detected_vram_gb <= 4.5:
+        report["limitations"].append(
+            "4GB VRAM is constrained; passing tiny mechanics does not imply default training readiness."
+        )
+    return report
+
+
+def run_short_real_data_validation(
+    *,
+    token_cache_dir: str = TOKEN_CACHE_DIR,
+    tokenizer_path: str = "./tokenizer_data",
+    checkpoint_dir: str = "./run_artifacts/short_real_data_validation",
+    seq_len: int = 16,
+    pre_resume_steps: int = 3,
+    post_resume_steps: int = 2,
+    seed: int = 321,
+    deterministic: bool = True,
+    model_overrides: Optional[Dict[str, Any]] = None,
+    force_device_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run a bounded multi-step real-token validation, not pretraining."""
+    import numpy as np
+    from eval_suite import inspect_checkpoint_path
+
+    if seq_len < 4:
+        raise ValueError("seq_len must be at least 4")
+    if pre_resume_steps < 1 or post_resume_steps < 1:
+        raise ValueError("pre_resume_steps and post_resume_steps must be >= 1")
+
+    started_at = time.time()
+    seed_report = set_training_seed(seed, deterministic=deterministic)
+    tok = BPETokenizer()
+    tok.load(tokenizer_path)
+    dtype = np.uint16 if tok.vocab_size_ <= 65535 else np.uint32
+    total_steps = int(pre_resume_steps) + int(post_resume_steps)
+    tokens_needed = total_steps * (seq_len + 1)
+    artifact_path = _first_token_artifact(
+        token_cache_dir,
+        dtype,
+        min_tokens=tokens_needed,
+    )
+    raw = np.fromfile(artifact_path, dtype=dtype, count=tokens_needed)
+    if raw.size < tokens_needed:
+        raise TrainingPreflightError(
+            f"token artifact has insufficient tokens for short validation: {artifact_path}"
+        )
+    max_token = int(raw.max(initial=0))
+    if max_token >= tok.vocab_size_:
+        raise TrainingPreflightError(
+            f"token id {max_token} exceeds tokenizer vocab size {tok.vocab_size_}"
+        )
+
+    if force_device_type is not None and force_device_type not in {"cpu", "cuda"}:
+        raise ValueError("force_device_type must be 'cpu', 'cuda', or None")
+    if force_device_type == "cuda" and not torch.cuda.is_available():
+        raise TrainingPreflightError("CUDA was required for validation but is unavailable")
+    device_type = force_device_type or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(device_type)
+    dtype_name = "bfloat16"
+    if device_type == "cuda":
+        checker = getattr(torch.cuda, "is_bf16_supported", None)
+        dtype_name = "bfloat16" if callable(checker) and checker() else "float16"
+
+    overrides = {
+        "dim": 96,
+        "n_layers": 3,
+        "n_heads": 4,
+        "n_kv_heads": 2,
+        "ffn_dim": 192,
+        "max_seq_len": max(64, seq_len),
+        "sliding_window": 8,
+    }
+    if model_overrides:
+        overrides.update(model_overrides)
+    tiny_cfg = _validation_model_config(
+        vocab_size=tok.vocab_size_,
+        seq_len=seq_len,
+        overrides=overrides,
+    )
+    model_config = _model_config_payload(tiny_cfg)
+    model_config_hash = hashlib.sha256(
+        json.dumps(model_config, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    validation_cfg = TrainConfig(
+        tokenizer_path=tokenizer_path,
+        checkpoint_dir=checkpoint_dir,
+        batch_size=1,
+        seq_len=seq_len,
+        grad_accum=1,
+        total_tokens=tokens_needed,
+        warmup_tokens=4,
+        curriculum_tokens=tokens_needed,
+        compile_model=False,
+        data_num_workers=0,
+        data_persistent_workers=False,
+        data_pin_memory=False,
+        device_non_blocking=False,
+    )
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    for name in os.listdir(checkpoint_dir):
+        if "_short_validation" in name and (
+            name.endswith(".pt") or name.endswith(".pt.sha256")
+        ):
+            os.remove(os.path.join(checkpoint_dir, name))
+
+    def _build_model_and_opt() -> tuple[LLM, torch.optim.Optimizer, Any]:
+        local_model = LLM(tiny_cfg).to(device).train()
+        local_opt = build_adamw(
+            local_model,
+            OptimizerSettings(lr=1e-3, weight_decay=0.0, use_fused=False),
+        )
+        local_amp = build_amp_policy(
+            AmpPolicySettings(
+                dtype_name=dtype_name,
+                device_type=device_type,
+                use_grad_scaler=(device_type == "cuda" and dtype_name == "float16"),
+            )
+        )
+        return local_model, local_opt, local_amp
+
+    def _step(
+        local_model: LLM,
+        local_opt: torch.optim.Optimizer,
+        local_amp: Any,
+        step_index: int,
+    ) -> Dict[str, Any]:
+        start = step_index * (seq_len + 1)
+        chunk = raw[start: start + seq_len + 1]
+        ids = torch.tensor(chunk[:-1], dtype=torch.long, device=device).unsqueeze(0)
+        targets = torch.tensor(chunk[1:], dtype=torch.long, device=device).unsqueeze(0)
+        with local_amp.autocast():
+            out = local_model(ids, targets=targets)
+        if not isinstance(out, LossOutput) or not torch.isfinite(out.total_loss.detach()):
+            raise TrainingPreflightError(
+                f"short validation produced invalid loss at step {step_index + 1}"
+            )
+        local_amp.backward(out.total_loss)
+        grad_norm = local_amp.clip_grad_norm_(local_opt, local_model.parameters(), 1.0)
+        if not torch.isfinite(torch.tensor(float(grad_norm))):
+            raise TrainingPreflightError(
+                f"short validation produced invalid grad norm at step {step_index + 1}"
+            )
+        local_amp.step(local_opt)
+        local_amp.update()
+        local_opt.zero_grad()
+        return {
+            "step": step_index + 1,
+            "loss": float(out.total_loss.detach().cpu().item()),
+            "grad_norm": float(grad_norm),
+        }
+
+    if device_type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    memory_before = (
+        torch.cuda.memory_allocated(device) if device_type == "cuda" else None
+    )
+
+    model, opt, amp = _build_model_and_opt()
+    step_reports: List[Dict[str, Any]] = []
+    for step_index in range(pre_resume_steps):
+        step_reports.append(_step(model, opt, amp, step_index))
+
+    save_ckpt(
+        model,
+        opt,
+        step=pre_resume_steps,
+        loss=step_reports[-1]["loss"],
+        cfg=validation_cfg,
+        master=True,
+        tag="_short_validation",
+    )
+    checkpoint_before_resume = os.path.join(
+        checkpoint_dir,
+        f"step_{pre_resume_steps:07d}_short_validation.pt",
+    )
+
+    restored, restored_opt, restored_amp = _build_model_and_opt()
+    resumed_step = load_ckpt(restored, restored_opt, validation_cfg, device=0)
+    if resumed_step != pre_resume_steps:
+        raise TrainingPreflightError(
+            f"short validation resume mismatch: expected {pre_resume_steps}, got {resumed_step}"
+        )
+
+    for step_index in range(pre_resume_steps, total_steps):
+        step_reports.append(_step(restored, restored_opt, restored_amp, step_index))
+
+    save_ckpt(
+        restored,
+        restored_opt,
+        step=total_steps,
+        loss=step_reports[-1]["loss"],
+        cfg=validation_cfg,
+        master=True,
+        tag="_short_validation_final",
+    )
+    final_checkpoint = os.path.join(
+        checkpoint_dir,
+        f"step_{total_steps:07d}_short_validation_final.pt",
+    )
+
+    produced_meta = inspect_checkpoint_path(checkpoint_dir)
+    if produced_meta.get("selected_checkpoint_exists") is not True:
+        raise TrainingPreflightError(
+            "eval checkpoint inspection did not find the short-validation checkpoint"
+        )
+    missing_meta = inspect_checkpoint_path(
+        os.path.join(checkpoint_dir, "missing_eval_checkpoint")
+    )
+    if missing_meta.get("load_status") != "missing":
+        raise TrainingPreflightError(
+            "eval missing-checkpoint gate did not report missing"
+        )
+
+    memory_after = (
+        torch.cuda.memory_allocated(device) if device_type == "cuda" else None
+    )
+    memory_peak = (
+        torch.cuda.max_memory_allocated(device) if device_type == "cuda" else None
+    )
+
+    return {
+        "schema": "short_real_data_validation_v1",
+        "ok": True,
+        "run_classification": "bounded_validation_not_pretraining",
+        "quality_claim": "none",
+        "capability_evidence": "none",
+        "artifact_path": artifact_path,
+        "tokens_read": int(raw.size),
+        "token_dtype": np.dtype(dtype).name,
+        "tokenizer_vocab_size": tok.vocab_size_,
+        "pre_resume_steps": int(pre_resume_steps),
+        "post_resume_steps": int(post_resume_steps),
+        "total_optimizer_steps": int(total_steps),
+        "seq_len": int(seq_len),
+        "device": device_type,
+        "dtype_requested": dtype_name,
+        "amp_dtype_used": str(amp.dtype).replace("torch.", ""),
+        "grad_scaler_used": amp.uses_grad_scaler,
+        "compile_attempted": False,
+        "checkpoint_dir": checkpoint_dir,
+        "checkpoint_before_resume": checkpoint_before_resume,
+        "final_checkpoint": final_checkpoint,
+        "checkpoint_exists": os.path.isfile(final_checkpoint),
+        "resumed_step": resumed_step,
+        "resume_success": resumed_step == pre_resume_steps,
+        "checkpoint_inspection": produced_meta,
+        "eval_gate_on_produced_checkpoint": (
+            "checkpoint_found"
+            if produced_meta.get("selected_checkpoint_exists")
+            else "checkpoint_missing"
+        ),
+        "eval_missing_checkpoint_gate": missing_meta.get("load_status"),
+        "step_reports": step_reports,
+        "model_config_hash": model_config_hash,
+        "model_config": model_config,
+        "seed_report": seed_report,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "memory_allocated_before_bytes": memory_before,
+        "memory_allocated_after_bytes": memory_after,
+        "memory_peak_allocated_bytes": memory_peak,
+        "runtime_seconds": round(time.time() - started_at, 4),
+        "limitations": [
+            "This is a bounded validation run, not pretraining.",
+            "The checkpoint is not evidence of useful model quality.",
+            "The tiny validation model is intentionally smaller than production profiles.",
+        ],
     }
 
 
