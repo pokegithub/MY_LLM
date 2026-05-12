@@ -14,7 +14,7 @@
 ### Last synchronization
 
 - Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, and the Phase A in-process Transformers backend MVP. This was not a brand-new full-model audit.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, and the Phase A backend smoke execution guide/config. This was not a brand-new full-model audit.
 - Module count: 90 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -169,6 +169,7 @@
 - Malformed JSON, schema violations, unsafe edit paths, missing backend configuration, unavailable Transformers dependencies, and model-load failures surface as explicit backend failure classes.
 - Exact symbolic tasks still bypass backend loading entirely, and verifier authority over solve success is unchanged.
 - The smoke command checks backend load and candidate-schema parsing only. It does not run a bakeoff, hidden eval, training, retrieval, or claim model quality.
+- `configs/backend_smoke_local_example.json` provides a non-default local-only smoke config. `backend_integration/backend_smoke_execution_guide_v1.md` documents truthful smoke outcomes, including backend dependency or local-model absence.
 
 ---
 

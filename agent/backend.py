@@ -295,6 +295,16 @@ def _import_transformers_module():
     return transformers
 
 
+def _local_model_path_exists(model_id_or_path: Optional[str]) -> Optional[bool]:
+    if not model_id_or_path:
+        return None
+    raw = str(model_id_or_path).strip()
+    path = Path(raw).expanduser()
+    if raw.startswith((".", "~")) or path.is_absolute():
+        return path.exists()
+    return None
+
+
 def _compact_context(context: ContextBundle) -> str:
     chunks = [f"workspace_root: {context.workspace_root}"]
     if context.notes:
@@ -581,6 +591,8 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
         "configured_model": status.get("model_id_or_path") or getattr(agent_cfg, "backend_model_id_or_path", None),
         "backend_available": bool(status.get("available")),
         "load_status": "available" if status.get("available") else "failed",
+        "local_files_only": status.get("local_files_only"),
+        "model_path_exists": status.get("model_path_exists"),
         "structured_output_parse_status": "not_attempted",
         "tiny_candidate_generation_status": "not_attempted",
         "failure_class": status.get("failure_class"),
@@ -718,6 +730,7 @@ def load_backend(
                 "reason": exc.message,
                 "model_id_or_path": agent_cfg.backend_model_id_or_path,
                 "local_files_only": agent_cfg.backend_local_files_only,
+                "model_path_exists": _local_model_path_exists(agent_cfg.backend_model_id_or_path),
             }
         return (
             backend,
@@ -728,6 +741,7 @@ def load_backend(
                 "failure_class": None,
                 "model_id_or_path": backend.model_id_or_path,
                 "local_files_only": backend.local_files_only,
+                "model_path_exists": _local_model_path_exists(backend.model_id_or_path),
             },
         )
 

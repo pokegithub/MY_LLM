@@ -69,6 +69,29 @@ def valid_candidate_json(path="demo.py", content="def add(a, b):\n    return a +
 
 
 class TransformersBackendMvpTests(unittest.TestCase):
+    def test_backend_smoke_example_config_is_local_only_and_non_default(self):
+        path = os.path.join("configs", "backend_smoke_local_example.json")
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        agent = payload["agent"]
+        self.assertEqual(agent["backend_kind"], "local_transformers_in_process")
+        self.assertTrue(agent["backend_local_files_only"])
+        self.assertFalse(agent["backend_trust_remote_code"])
+        self.assertLessEqual(agent["backend_max_new_tokens"], 128)
+        self.assertIn("run_artifacts/local_models", agent["backend_model_id_or_path"].replace("\\", "/"))
+
+    def test_backend_smoke_guide_preserves_non_claiming_language(self):
+        path = os.path.join("backend_integration", "backend_smoke_execution_guide_v1.md")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read().lower()
+
+        self.assertIn("backend_local_files_only: true", text)
+        self.assertIn("proves_real_coding_ability: false", text)
+        self.assertIn("quality_claim: none", text)
+        self.assertIn("not proof of coding ability", text)
+        self.assertNotIn("production ready", text)
+
     def test_no_backend_coding_task_still_blocks(self):
         with tempfile.TemporaryDirectory() as td:
             with agent_config_overrides(
@@ -224,6 +247,7 @@ class TransformersBackendMvpTests(unittest.TestCase):
 
         self.assertEqual(report["schema"], "agent_backend_smoke_v1")
         self.assertTrue(report["backend_available"])
+        self.assertTrue(report["local_files_only"])
         self.assertEqual(report["structured_output_parse_status"], "passed")
         self.assertEqual(report["tiny_candidate_generation_status"], "candidate_generated")
         self.assertFalse(report["proves_real_coding_ability"])

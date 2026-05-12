@@ -503,6 +503,10 @@ def run_agent_backend_smoke(args):
     print(f"  backend_kind      : {payload.get('backend_kind', 'unknown')}")
     print(f"  configured_model  : {payload.get('configured_model') or 'none'}")
     print(f"  backend_available : {str(payload.get('backend_available')).lower()}")
+    if payload.get("local_files_only") is not None:
+        print(f"  local_files_only  : {str(payload.get('local_files_only')).lower()}")
+    if payload.get("model_path_exists") is not None:
+        print(f"  model_path_exists : {str(payload.get('model_path_exists')).lower()}")
     print(f"  load_status       : {payload.get('load_status')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
     print(f"  generation_status : {payload.get('tiny_candidate_generation_status')}")
