@@ -11,6 +11,7 @@ Usage:
   python run.py trajectory-export-sft Export verified trajectories into SFT-style records
   python run.py trajectory-export-preferences Export verifier-justified preference pairs
   python run.py trajectory-export-retrieval Export compact retrieval-ready trajectory records
+  python run.py trajectory-quality-audit Audit trajectory future-use eligibility
   python run.py tokenizer      Train the BPE tokenizer
   python run.py download       Download and cache training data
     python run.py download-safe  Download with network-safe defaults
@@ -161,6 +162,7 @@ def check_dependencies(command: str):
         "trajectory-export-sft": {},
         "trajectory-export-preferences": {},
         "trajectory-export-retrieval": {},
+        "trajectory-quality-audit": {},
         "tokenizer": {"tokenizers": "tokenizers", "datasets": "datasets"},
         "download": {"numpy": "numpy", "datasets": "datasets"},
         "download-safe": {"numpy": "numpy", "datasets": "datasets"},
@@ -659,6 +661,38 @@ def run_trajectory_export_retrieval(args):
         _emit_json(payload)
         return
     _print_export_summary("TRAJECTORY EXPORT RETRIEVAL", payload)
+
+
+def _print_trajectory_quality_audit(payload: dict):
+    print("\n" + "=" * 60)
+    print("TRAJECTORY QUALITY AUDIT")
+    print("=" * 60)
+    print(f"  trajectory_root       : {payload['trajectory_root']}")
+    print(f"  scanned               : {payload['scanned_trajectories']}")
+    print(f"  sft_positive          : {payload['eligibility_counts']['sft_positive_eligible']}")
+    print(f"  preference_winner     : {payload['eligibility_counts']['preference_winner_eligible']}")
+    print(f"  preference_loser      : {payload['eligibility_counts']['preference_loser_eligible']}")
+    print(f"  retrieval_memory      : {payload['eligibility_counts']['retrieval_memory_eligible']}")
+    print(f"  exact_tool_only       : {payload['eligibility_counts']['exact_tool_curriculum_only']}")
+    print(f"  rejected_positive     : {payload['eligibility_counts']['rejected_for_positive_training']}")
+    print(f"  store_quality_note    : {payload['store_quality_note']}")
+    if payload.get("report_path"):
+        print(f"  report_path           : {payload['report_path']}")
+    if payload.get("top_reject_or_skip_reasons"):
+        print(f"  top_reasons           : {payload['top_reject_or_skip_reasons']}")
+    print(f"  learning_claim        : {payload['learning_claim']}")
+    print(f"  model_improvement     : {payload['model_improvement_claim']}")
+    print("=" * 60)
+
+
+def run_trajectory_quality_audit(args):
+    from agent.trajectory_quality import build_quality_audit
+
+    payload = build_quality_audit(report_path=args.report_path)
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+    _print_trajectory_quality_audit(payload)
 
 
 def run_hardware_validate():
@@ -1591,6 +1625,7 @@ Commands:
   trajectory-export-sft Export verified trajectories into SFT-style records
   trajectory-export-preferences Export verifier-justified preference pairs
   trajectory-export-retrieval Export compact retrieval-ready trajectory records
+  trajectory-quality-audit Audit trajectory future-use eligibility
   tokenizer    Train the BPE tokenizer
   download     Download and cache training data
     download-safe Download with network-safe defaults
@@ -1626,7 +1661,7 @@ Commands:
         choices=[
             "agent-plan", "agent-solve", "agent-verify",
             "trajectory-list", "trajectory-show", "trajectory-search",
-            "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval",
+            "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
             "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
             "validate-short-run",
@@ -1763,6 +1798,7 @@ Commands:
         "trajectory-export-sft": lambda: run_trajectory_export_sft(args),
         "trajectory-export-preferences": lambda: run_trajectory_export_preferences(args),
         "trajectory-export-retrieval": lambda: run_trajectory_export_retrieval(args),
+        "trajectory-quality-audit": lambda: run_trajectory_quality_audit(args),
         "tokenizer": run_tokenizer,
         "download": run_download,
         "download-safe": run_download_safe,
