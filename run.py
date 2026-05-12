@@ -6,6 +6,7 @@ Usage:
   python run.py agent-solve    Run the verified coding-agent solve path
   python run.py agent-verify   Run the verified coding-agent verify path
   python run.py agent-backend-smoke Check configured coding backend load and candidate schema
+  python run.py agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -89,6 +90,7 @@ DEFAULT_AGENT_REPORT_ROOT = os.path.join(
     "agent",
 )
 REPORT_PATH = None
+BACKEND_REQUIREMENTS_PATH = "./requirements-backend.txt"
 
 
 def _emit_json(payload):
@@ -158,6 +160,7 @@ def check_dependencies(command: str):
         "agent-solve": {},
         "agent-verify": {},
         "agent-backend-smoke": {},
+        "agent-backend-provision-tiny-model": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -262,6 +265,14 @@ def collect_dependency_checks(requirements_path: str = "./requirement.txt"):
     return check_requirement_file(requirements_path)
 
 
+def collect_backend_dependency_checks(requirements_path: str = BACKEND_REQUIREMENTS_PATH):
+    """Collect optional backend dependency drift without gating non-backend commands."""
+    report = check_requirement_file(requirements_path)
+    report["optional"] = True
+    report["purpose"] = "local_transformers_backend"
+    return report
+
+
 def _print_dependency_summary(report):
     print("\nDEPENDENCY ENVIRONMENT")
     print(f"  requirements: {os.path.abspath(report['path'])}")
@@ -281,6 +292,28 @@ def _print_dependency_summary(report):
             f"  [{status:<10}] {item['package']:<12} "
             f"installed={installed} required={item['required']}"
         )
+
+
+def _print_backend_dependency_summary(report):
+    print("\nOPTIONAL BACKEND DEPENDENCIES")
+    print(f"  requirements: {os.path.abspath(report['path'])}")
+    if not report["exists"]:
+        print("  [UNVERIFIED] optional backend requirement file is missing")
+        return
+    summary = report["summary"]
+    print(
+        "  summary     : "
+        f"pass={summary['pass']} fail={summary['fail']} "
+        f"unverified={summary['unverified']}"
+    )
+    for item in report["items"]:
+        status = str(item["status"]).upper()
+        installed = item["installed"] if item["installed"] is not None else "missing"
+        print(
+            f"  [{status:<10}] {item['package']:<12} "
+            f"installed={installed} required={item['required']}"
+        )
+    print("  gates       : backend-specific only; normal repo commands remain fail-closed if unavailable")
 
 
 def _next_status_action(dependency_ok: bool):
@@ -335,10 +368,12 @@ def _next_status_action(dependency_ok: bool):
 
 def build_status_report():
     dependency_report = collect_dependency_checks()
+    backend_dependency_report = collect_backend_dependency_checks()
     return {
         "schema": "pipeline_status_v2",
         "status_checks": collect_status_checks(),
         "dependency_environment": dependency_report,
+        "optional_backend_dependency_environment": backend_dependency_report,
         "next_action": _next_status_action(dependency_report["ok"]),
         "training_quality_claim": "none",
     }
@@ -371,6 +406,7 @@ def show_status():
     print("=" * 60)
     dependency_report = report["dependency_environment"]
     _print_dependency_summary(dependency_report)
+    _print_backend_dependency_summary(report["optional_backend_dependency_environment"])
 
     next_action = report["next_action"]
     print(f"\n  NEXT: {next_action['command']}")
@@ -385,6 +421,8 @@ def show_status():
 def run_deps():
     """Show declared dependency satisfaction."""
     report = collect_dependency_checks()
+    backend_report = collect_backend_dependency_checks()
+    report["optional_backend_dependency_environment"] = backend_report
     if OUTPUT_JSON:
         _emit_json(report)
         if not report["ok"]:
@@ -392,6 +430,7 @@ def run_deps():
         return
 
     _print_dependency_summary(report)
+    _print_backend_dependency_summary(backend_report)
     if not report["ok"]:
         print("\nDEPENDENCY CHECK FAILED")
         sys.exit(1)
@@ -503,19 +542,58 @@ def run_agent_backend_smoke(args):
     print(f"  backend_kind      : {payload.get('backend_kind', 'unknown')}")
     print(f"  configured_model  : {payload.get('configured_model') or 'none'}")
     print(f"  backend_available : {str(payload.get('backend_available')).lower()}")
+    print(f"  smoke_level       : {payload.get('smoke_level')}")
+    print(f"  transformers      : {str(payload.get('transformers_available')).lower()}")
     if payload.get("local_files_only") is not None:
         print(f"  local_files_only  : {str(payload.get('local_files_only')).lower()}")
     if payload.get("model_path_exists") is not None:
         print(f"  model_path_exists : {str(payload.get('model_path_exists')).lower()}")
     print(f"  load_status       : {payload.get('load_status')}")
+    print(f"  tokenizer_load    : {payload.get('tokenizer_load_status')}")
+    print(f"  model_load        : {payload.get('model_load_status')}")
+    print(f"  generation_status : {payload.get('generation_status')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
-    print(f"  generation_status : {payload.get('tiny_candidate_generation_status')}")
+    print(f"  candidate_valid   : {str(payload.get('structured_candidate_valid')).lower()}")
+    print(f"  candidate_status  : {payload.get('tiny_candidate_generation_status')}")
     if payload.get("failure_class"):
         print(f"  failure_class     : {payload.get('failure_class')}")
     if payload.get("failure_reason"):
         print(f"  failure_reason    : {payload.get('failure_reason')}")
     print(f"  proves_coding     : {str(payload.get('proves_real_coding_ability')).lower()}")
     print(f"  quality_claim     : {payload.get('quality_claim')}")
+    print("=" * 60)
+
+
+def run_agent_backend_provision_tiny_model(args):
+    from agent.backend import provision_tiny_transformers_model
+
+    payload = provision_tiny_transformers_model(
+        model_id=args.tiny_model_id,
+        destination=args.tiny_model_dest,
+        allow_non_tiny_model_id=bool(args.allow_non_tiny_model_id),
+    )
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("AGENT BACKEND TINY MODEL PROVISION")
+    print("=" * 60)
+    print(f"  status       : {payload.get('status')}")
+    print(f"  model_id     : {payload.get('model_id')}")
+    print(f"  destination  : {payload.get('destination')}")
+    print(f"  smoke_only   : {str(payload.get('smoke_only')).lower()}")
+    print(f"  internet     : {str(payload.get('internet_required')).lower()}")
+    if payload.get("failure_class"):
+        print(f"  failure_class: {payload.get('failure_class')}")
+    if payload.get("failure_reason"):
+        print(f"  failure_reason: {payload.get('failure_reason')}")
+    if payload.get("artifact_summary"):
+        summary = payload["artifact_summary"]
+        print(f"  files        : {summary.get('file_count')}")
+        print(f"  size_bytes   : {summary.get('size_bytes')}")
+    print(f"  proves_coding: {str(payload.get('proves_real_coding_ability')).lower()}")
+    print(f"  quality_claim: {payload.get('quality_claim')}")
     print("=" * 60)
 
 
@@ -1652,6 +1730,7 @@ Commands:
   agent-solve  Run the verified coding-agent solve path
   agent-verify Run the verified coding-agent verify path
   agent-backend-smoke Check configured coding backend load and candidate schema
+  agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1694,6 +1773,7 @@ Commands:
         choices=[
             "agent-plan", "agent-solve", "agent-verify",
             "agent-backend-smoke",
+            "agent-backend-provision-tiny-model",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -1763,6 +1843,21 @@ Commands:
         help="Attempt the bounded post-green optimizer after solve verification passes.",
     )
     parser.add_argument(
+        "--tiny-model-id",
+        default="hf-internal-testing/tiny-random-gpt2",
+        help="Allowlisted tiny HF model id for agent-backend-provision-tiny-model.",
+    )
+    parser.add_argument(
+        "--tiny-model-dest",
+        default="./run_artifacts/local_models/tiny-transformers-smoke",
+        help="Local destination for the smoke-only tiny backend model.",
+    )
+    parser.add_argument(
+        "--allow-non-tiny-model-id",
+        action="store_true",
+        help="Override the tiny-model allowlist for provisioning. Use only for explicit local smoke experiments.",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Run identifier for trajectory-show.",
@@ -1827,6 +1922,7 @@ Commands:
         "agent-solve": lambda: run_agent_solve(args),
         "agent-verify": lambda: run_agent_verify(args),
         "agent-backend-smoke": lambda: run_agent_backend_smoke(args),
+        "agent-backend-provision-tiny-model": lambda: run_agent_backend_provision_tiny_model(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),

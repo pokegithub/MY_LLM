@@ -14,7 +14,7 @@
 ### Last synchronization
 
 - Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, and the Phase A backend smoke execution guide/config. This was not a brand-new full-model audit.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, and the Phase A backend runtime/tiny-model smoke execution package. This was not a brand-new full-model audit.
 - Module count: 90 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -164,12 +164,16 @@
 - Scope: Added the first explicitly configured local Transformers backend path for backend-backed coding candidates.
 - New CLI command:
   - `agent-backend-smoke`
+  - `agent-backend-provision-tiny-model`
 - `agent/backend.py` now supports `agent.backend_kind: local_transformers_in_process` with an explicit `agent.backend_model_id_or_path`. It uses local model files by default and does not auto-download a model.
 - Generated backend output must be strict JSON that validates into the existing `Candidate` and `FileEdit` contract before the agent can apply it.
 - Malformed JSON, schema violations, unsafe edit paths, missing backend configuration, unavailable Transformers dependencies, and model-load failures surface as explicit backend failure classes.
 - Exact symbolic tasks still bypass backend loading entirely, and verifier authority over solve success is unchanged.
-- The smoke command checks backend load and candidate-schema parsing only. It does not run a bakeoff, hidden eval, training, retrieval, or claim model quality.
+- `requirements-backend.txt` declares optional backend-specific runtime dependencies. Missing backend dependencies must not block normal no-backend or exact-task behavior.
+- The smoke command now separates runtime availability, tokenizer/model loading, generation, strict candidate parsing, and candidate validity. It does not run a bakeoff, hidden eval, training, retrieval, or claim model quality.
+- `agent-backend-provision-tiny-model` explicitly downloads only allowlisted tiny smoke models by default and writes them under `run_artifacts/local_models/tiny-transformers-smoke`.
 - `configs/backend_smoke_local_example.json` provides a non-default local-only smoke config. `backend_integration/backend_smoke_execution_guide_v1.md` documents truthful smoke outcomes, including backend dependency or local-model absence.
+- A tiny model loading and generation smoke can pass while structured candidate parsing still fails; that is useful runtime evidence, not coding-quality evidence.
 
 ---
 
@@ -371,6 +375,7 @@ Primary architectural planes:
 - `agent-solve`
 - `agent-verify`
 - `agent-backend-smoke`
+- `agent-backend-provision-tiny-model`
 - `trajectory-list`
 - `trajectory-show`
 - `trajectory-search`
@@ -441,6 +446,7 @@ Primary architectural planes:
 - `agent-solve`: runs the verified coding-agent solve path, including deterministic exact-task handling, bounded repair attempts, and optional post-green optimization
 - `agent-verify`: runs agent-side verification only and does not fabricate a candidate
 - `agent-backend-smoke`: reports configured backend load and strict candidate-schema parsing status without claiming coding ability or bakeoff success
+- `agent-backend-provision-tiny-model`: explicitly provisions an allowlisted tiny local Transformers smoke model; this is not model-quality or bakeoff evidence
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning

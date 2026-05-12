@@ -13,6 +13,7 @@ from agent.trajectory import build_trajectory_record
 from agent.trajectory_quality import SFT_POSITIVE, classify_trajectory
 from agent.types import SOLVE_STATUS_BLOCKED, SOLVE_STATUS_VERIFIED, TaskRequest
 from config import agent_cfg
+from run import collect_backend_dependency_checks
 
 
 @contextmanager
@@ -29,7 +30,9 @@ def agent_config_overrides(**overrides):
 
 def fake_transformers_module(output_text: str):
     class FakeTokenizer:
-        def __call__(self, prompt, return_tensors=None):
+        model_max_length = 128
+
+        def __call__(self, prompt, return_tensors=None, **kwargs):
             return {"input_ids": [[1, 2, 3]]}
 
         def decode(self, generated, skip_special_tokens=True):
@@ -58,6 +61,24 @@ def fake_transformers_module(output_text: str):
     )
 
 
+def fake_transformers_load_fails(message: str = "local files missing"):
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise OSError(message)
+
+    class AutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise OSError(message)
+
+    return types.SimpleNamespace(
+        __version__="fake",
+        AutoTokenizer=AutoTokenizer,
+        AutoModelForCausalLM=AutoModelForCausalLM,
+    )
+
+
 def valid_candidate_json(path="demo.py", content="def add(a, b):\n    return a + b\n"):
     return json.dumps(
         {
@@ -69,6 +90,16 @@ def valid_candidate_json(path="demo.py", content="def add(a, b):\n    return a +
 
 
 class TransformersBackendMvpTests(unittest.TestCase):
+    def test_backend_dependency_surface_is_optional_and_machine_readable(self):
+        report = collect_backend_dependency_checks()
+
+        self.assertTrue(report["optional"])
+        self.assertEqual(report["purpose"], "local_transformers_backend")
+        self.assertTrue(report["exists"])
+        packages = {item["package"] for item in report["items"]}
+        self.assertIn("transformers", packages)
+        self.assertIn("safetensors", packages)
+
     def test_backend_smoke_example_config_is_local_only_and_non_default(self):
         path = os.path.join("configs", "backend_smoke_local_example.json")
         with open(path, "r", encoding="utf-8") as handle:
@@ -248,10 +279,52 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["schema"], "agent_backend_smoke_v1")
         self.assertTrue(report["backend_available"])
         self.assertTrue(report["local_files_only"])
+        self.assertTrue(report["transformers_available"])
+        self.assertEqual(report["tokenizer_load_status"], "passed")
+        self.assertEqual(report["model_load_status"], "passed")
+        self.assertEqual(report["generation_status"], "passed")
         self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertTrue(report["structured_candidate_valid"])
         self.assertEqual(report["tiny_candidate_generation_status"], "candidate_generated")
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_passed")
         self.assertFalse(report["proves_real_coding_ability"])
         self.assertEqual(report["quality_claim"], "none")
+
+    def test_backend_smoke_reports_model_missing_separately_from_runtime_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            missing_path = os.path.join(td, "missing-model")
+            fake_module = fake_transformers_load_fails()
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path=missing_path,
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertTrue(report["transformers_available"])
+        self.assertFalse(report["backend_available"])
+        self.assertFalse(report["model_path_exists"])
+        self.assertEqual(report["tokenizer_load_status"], "failed")
+        self.assertEqual(report["smoke_level"], "model_missing")
+        self.assertEqual(report["failure_class"], "model_load_failed")
+
+    def test_backend_smoke_reports_generation_succeeded_parse_failed(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_module("not json")
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertTrue(report["backend_available"])
+        self.assertEqual(report["generation_status"], "passed")
+        self.assertEqual(report["structured_output_parse_status"], "failed")
+        self.assertFalse(report["structured_candidate_valid"])
+        self.assertEqual(report["failure_class"], "malformed_candidate_output")
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_failed")
+        self.assertGreater(report["generated_text_chars"], 0)
 
     def test_candidate_parser_rejects_plain_prose(self):
         with tempfile.TemporaryDirectory() as td:

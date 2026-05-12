@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import importlib.util
+import sys
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Tuple
 
@@ -24,15 +27,22 @@ from security.validator import ValidationError, get_allowed_data_roots, safe_loa
 
 BACKEND_KIND_LOCAL_TRANSFORMERS = "local_transformers_in_process"
 BACKEND_KIND_TRANSFORMER_ALIASES = {BACKEND_KIND_LOCAL_TRANSFORMERS}
+DEFAULT_TINY_SMOKE_MODEL_ID = "hf-internal-testing/tiny-random-gpt2"
+DEFAULT_TINY_SMOKE_MODEL_DEST = "./run_artifacts/local_models/tiny-transformers-smoke"
+ALLOWED_TINY_SMOKE_MODEL_IDS = {
+    "hf-internal-testing/tiny-random-gpt2",
+    "sshleifer/tiny-gpt2",
+}
 
 
 class BackendError(RuntimeError):
     """Base error for truthful backend failure surfaces."""
 
-    def __init__(self, failure_class: str, message: str):
+    def __init__(self, failure_class: str, message: str, *, failure_stage: Optional[str] = None):
         super().__init__(f"{failure_class}: {message}")
         self.failure_class = failure_class
         self.message = message
+        self.failure_stage = failure_stage
 
 
 class BackendLoadError(BackendError):
@@ -291,8 +301,45 @@ def _import_transformers_module():
         raise BackendLoadError(
             "backend_unavailable",
             "transformers package is not installed in this environment",
+            failure_stage="runtime_import",
         ) from exc
     return transformers
+
+
+def transformers_runtime_status() -> Dict[str, Any]:
+    """Return optional Transformers runtime availability without importing a model."""
+    existing = sys.modules.get("transformers")
+    if existing is not None:
+        return {
+            "available": True,
+            "version": getattr(existing, "__version__", "unknown"),
+            "failure_class": None,
+            "reason": None,
+        }
+    try:
+        spec = importlib.util.find_spec("transformers")
+    except ValueError:
+        spec = None
+    if spec is None:
+        return {
+            "available": False,
+            "failure_class": "backend_unavailable",
+            "reason": "transformers package is not installed in this environment",
+        }
+    try:
+        import transformers  # type: ignore
+    except Exception as exc:
+        return {
+            "available": False,
+            "failure_class": "backend_unavailable",
+            "reason": f"transformers package could not be imported: {exc}",
+        }
+    return {
+        "available": True,
+        "version": getattr(transformers, "__version__", "unknown"),
+        "failure_class": None,
+        "reason": None,
+    }
 
 
 def _local_model_path_exists(model_id_or_path: Optional[str]) -> Optional[bool]:
@@ -441,6 +488,13 @@ class LocalTransformersInProcessBackend:
                 local_files_only=self.local_files_only,
                 trust_remote_code=self.trust_remote_code,
             )
+        except Exception as exc:
+            raise BackendLoadError(
+                "model_load_failed",
+                f"tokenizer load failed: {exc}",
+                failure_stage="tokenizer_load",
+            ) from exc
+        try:
             self._model = transformers.AutoModelForCausalLM.from_pretrained(
                 self.model_id_or_path,
                 local_files_only=self.local_files_only,
@@ -458,12 +512,32 @@ class LocalTransformersInProcessBackend:
         except Exception as exc:
             raise BackendLoadError(
                 "model_load_failed",
-                f"local Transformers model could not be loaded: {exc}",
+                f"model load failed: {exc}",
+                failure_stage="model_load",
             ) from exc
+
+    def _max_input_tokens(self) -> Optional[int]:
+        values = []
+        config = getattr(self._model, "config", None)
+        for name in ("max_position_embeddings", "n_positions", "max_sequence_length"):
+            value = getattr(config, name, None)
+            if isinstance(value, int) and value > 0:
+                values.append(value)
+        tokenizer_limit = getattr(self._tokenizer, "model_max_length", None)
+        if isinstance(tokenizer_limit, int) and 0 < tokenizer_limit < 1_000_000:
+            values.append(tokenizer_limit)
+        if not values:
+            return None
+        context_limit = min(values)
+        return max(1, context_limit - max(1, self.max_new_tokens))
 
     def _generate_text(self, prompt: str) -> str:
         try:
-            encoded = self._tokenizer(prompt, return_tensors="pt")
+            max_input_tokens = self._max_input_tokens()
+            tokenizer_kwargs: Dict[str, Any] = {"return_tensors": "pt"}
+            if max_input_tokens is not None:
+                tokenizer_kwargs.update({"truncation": True, "max_length": max_input_tokens})
+            encoded = self._tokenizer(prompt, **tokenizer_kwargs)
             if not isinstance(encoded, Mapping):
                 encoded = dict(encoded)
             encoded = _move_encoded(encoded, self.device)
@@ -582,27 +656,7 @@ class LocalTransformersInProcessBackend:
         )
 
 
-def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
-    """Run a narrow backend capability smoke check without applying edits."""
-    backend, status = load_backend(workspace_root=workspace_root)
-    report: Dict[str, Any] = {
-        "schema": "agent_backend_smoke_v1",
-        "backend_kind": status.get("kind", "unknown"),
-        "configured_model": status.get("model_id_or_path") or getattr(agent_cfg, "backend_model_id_or_path", None),
-        "backend_available": bool(status.get("available")),
-        "load_status": "available" if status.get("available") else "failed",
-        "local_files_only": status.get("local_files_only"),
-        "model_path_exists": status.get("model_path_exists"),
-        "structured_output_parse_status": "not_attempted",
-        "tiny_candidate_generation_status": "not_attempted",
-        "failure_class": status.get("failure_class"),
-        "failure_reason": status.get("reason"),
-        "proves_real_coding_ability": False,
-        "quality_claim": "none",
-    }
-    if backend is None:
-        return report
-
+def _smoke_request_context_plan(workspace_root: str) -> tuple[TaskRequest, ContextBundle, SolvePlan]:
     request = TaskRequest(
         task_text="Backend smoke: produce a minimal candidate for backend_smoke_target.py",
         file_hints=("backend_smoke_target.py",),
@@ -634,29 +688,244 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
         retry_budget=0,
         stop_conditions=("malformed output blocks the smoke check",),
     )
+    return request, context, plan
+
+
+def _smoke_load_status(report: Dict[str, Any], status: Mapping[str, Any]) -> None:
+    stage = status.get("failure_stage")
+    if status.get("available"):
+        report["tokenizer_load_status"] = "passed"
+        report["model_load_status"] = "passed"
+        report["smoke_level"] = "model_loaded"
+        return
+    if not report.get("transformers_available"):
+        report["smoke_level"] = "runtime_unavailable"
+        return
+    if status.get("model_path_exists") is False and status.get("local_files_only") is True:
+        report["smoke_level"] = "model_missing"
+    elif stage == "tokenizer_load":
+        report["smoke_level"] = "model_load_failed"
+    elif stage == "model_load":
+        report["tokenizer_load_status"] = "passed"
+        report["smoke_level"] = "model_load_failed"
+    else:
+        report["smoke_level"] = "runtime_unavailable"
+    if stage == "tokenizer_load":
+        report["tokenizer_load_status"] = "failed"
+    if stage == "model_load":
+        report["model_load_status"] = "failed"
+
+
+def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
+    """Run a narrow backend capability smoke check without applying edits."""
+    runtime = transformers_runtime_status()
+    backend, status = load_backend(workspace_root=workspace_root)
+    report: Dict[str, Any] = {
+        "schema": "agent_backend_smoke_v1",
+        "backend_kind": status.get("kind", "unknown"),
+        "configured_model": status.get("model_id_or_path") or getattr(agent_cfg, "backend_model_id_or_path", None),
+        "backend_available": bool(status.get("available")),
+        "load_status": "available" if status.get("available") else "failed",
+        "local_files_only": status.get("local_files_only"),
+        "model_path_exists": status.get("model_path_exists"),
+        "transformers_available": bool(runtime.get("available")),
+        "transformers_version": runtime.get("version"),
+        "tokenizer_load_status": "not_attempted",
+        "model_load_status": "not_attempted",
+        "generation_status": "not_attempted",
+        "generated_text_chars": 0,
+        "generated_text_sample": None,
+        "generated_text_sha256": None,
+        "structured_output_parse_status": "not_attempted",
+        "structured_candidate_valid": False,
+        "tiny_candidate_generation_status": "not_attempted",
+        "failure_class": status.get("failure_class"),
+        "failure_reason": status.get("reason"),
+        "smoke_level": "not_started",
+        "proves_real_coding_ability": False,
+        "quality_claim": "none",
+    }
+    _smoke_load_status(report, status)
+    if backend is None:
+        return report
+
+    request, context, plan = _smoke_request_context_plan(workspace_root)
     try:
-        candidate = backend.generate_initial_candidate(request, context, plan)
+        if isinstance(backend, LocalTransformersInProcessBackend):
+            prompt = _candidate_contract_prompt(
+                purpose="initial_candidate",
+                request=request,
+                context=context,
+                plan=plan,
+            )
+            raw_text = backend._generate_text(prompt)
+            report["generation_status"] = "passed"
+            report["generated_text_chars"] = len(raw_text)
+            report["generated_text_sample"] = raw_text[:240]
+            report["generated_text_sha256"] = hashlib.sha256(raw_text.encode("utf-8", errors="replace")).hexdigest()
+            candidate = candidate_from_model_text(
+                raw_text,
+                source="local_transformers_initial",
+                workspace_root=workspace_root,
+                metadata={
+                    "backend_kind": BACKEND_KIND_LOCAL_TRANSFORMERS,
+                    "model_id_or_path": backend.model_id_or_path,
+                    "local_files_only": backend.local_files_only,
+                    "raw_output_chars": len(raw_text),
+                },
+            )
+        else:
+            candidate = backend.generate_initial_candidate(request, context, plan)
+            report["generation_status"] = "passed"
     except BackendCandidateError as exc:
         report["structured_output_parse_status"] = "failed"
         report["tiny_candidate_generation_status"] = "failed"
         report["failure_class"] = exc.failure_class
         report["failure_reason"] = exc.message
+        if report["generation_status"] == "passed":
+            report["smoke_level"] = "model_loaded_generation_succeeded_parse_failed"
+        else:
+            report["generation_status"] = "failed"
+            report["smoke_level"] = "model_loaded_generation_failed"
         return report
     except Exception as exc:
         report["structured_output_parse_status"] = "failed"
         report["tiny_candidate_generation_status"] = "failed"
         report["failure_class"] = "runtime_execution_failed"
         report["failure_reason"] = str(exc)
+        report["generation_status"] = "failed"
+        report["smoke_level"] = "model_loaded_generation_failed"
         return report
 
     report["structured_output_parse_status"] = "passed"
+    report["structured_candidate_valid"] = True
     report["tiny_candidate_generation_status"] = "candidate_generated"
+    report["smoke_level"] = "model_loaded_generation_succeeded_parse_passed"
     report["candidate_summary"] = {
         "candidate_id": candidate.candidate_id,
         "source": candidate.source,
         "edit_count": len(candidate.edits),
         "edit_paths": [edit.path for edit in candidate.edits],
     }
+    return report
+
+
+def _directory_summary(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {"file_count": 0, "size_bytes": 0}
+    files = [item for item in path.rglob("*") if item.is_file()]
+    return {
+        "file_count": len(files),
+        "size_bytes": sum(item.stat().st_size for item in files),
+    }
+
+
+def provision_tiny_transformers_model(
+    *,
+    model_id: str = DEFAULT_TINY_SMOKE_MODEL_ID,
+    destination: str = DEFAULT_TINY_SMOKE_MODEL_DEST,
+    allow_non_tiny_model_id: bool = False,
+) -> Dict[str, Any]:
+    """Explicitly download and save a smoke-only tiny Transformers model."""
+    model_id = str(model_id).strip()
+    destination_path = Path(destination).expanduser().resolve()
+    report: Dict[str, Any] = {
+        "schema": "agent_backend_tiny_model_provision_v1",
+        "model_id": model_id,
+        "destination": str(destination_path),
+        "allowed_tiny_model_ids": sorted(ALLOWED_TINY_SMOKE_MODEL_IDS),
+        "internet_required": True,
+        "smoke_only": True,
+        "proves_real_coding_ability": False,
+        "quality_claim": "none",
+        "status": "not_started",
+        "ok": False,
+    }
+    if model_id not in ALLOWED_TINY_SMOKE_MODEL_IDS and not allow_non_tiny_model_id:
+        report.update(
+            {
+                "status": "rejected",
+                "failure_class": "unsupported_capability",
+                "failure_reason": "model id is not in the tiny smoke allowlist",
+            }
+        )
+        return report
+    try:
+        validate_local_path(
+            destination_path,
+            allowed_roots=(Path(os.getcwd()).resolve(),),
+            must_exist=False,
+        )
+    except ValidationError as exc:
+        report.update(
+            {
+                "status": "rejected",
+                "failure_class": "schema_validation_failed",
+                "failure_reason": str(exc),
+            }
+        )
+        return report
+
+    runtime = transformers_runtime_status()
+    report["transformers_available"] = bool(runtime.get("available"))
+    report["transformers_version"] = runtime.get("version")
+    if not runtime.get("available"):
+        report.update(
+            {
+                "status": "failed",
+                "failure_class": runtime.get("failure_class"),
+                "failure_reason": runtime.get("reason"),
+            }
+        )
+        return report
+
+    try:
+        transformers = _import_transformers_module()
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_id,
+            local_files_only=False,
+            trust_remote_code=False,
+        )
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_id,
+            local_files_only=False,
+            trust_remote_code=False,
+        )
+        destination_path.mkdir(parents=True, exist_ok=True)
+        tokenizer.save_pretrained(str(destination_path))
+        model.save_pretrained(str(destination_path), safe_serialization=True)
+        with open(destination_path / "backend_smoke_model_source.json", "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "schema": "backend_smoke_model_source_v1",
+                    "model_id": model_id,
+                    "smoke_only": True,
+                    "proves_real_coding_ability": False,
+                    "quality_claim": "none",
+                },
+                handle,
+                indent=2,
+                sort_keys=True,
+            )
+    except Exception as exc:
+        report.update(
+            {
+                "status": "failed",
+                "failure_class": "model_load_failed",
+                "failure_reason": str(exc),
+            }
+        )
+        return report
+
+    report.update(
+        {
+            "status": "provisioned",
+            "ok": True,
+            "local_files_only_for_smoke": True,
+            "model_path_exists": destination_path.exists(),
+            "artifact_summary": _directory_summary(destination_path),
+        }
+    )
     return report
 
 
@@ -727,6 +996,7 @@ def load_backend(
                 "available": False,
                 "kind": BACKEND_KIND_LOCAL_TRANSFORMERS,
                 "failure_class": exc.failure_class,
+                "failure_stage": exc.failure_stage,
                 "reason": exc.message,
                 "model_id_or_path": agent_cfg.backend_model_id_or_path,
                 "local_files_only": agent_cfg.backend_local_files_only,
