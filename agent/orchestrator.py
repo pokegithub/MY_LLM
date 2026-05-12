@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Dict, List, Optional, Sequence
 
-from agent.backend import CodingModelBackend, load_backend
+from agent.backend import BackendCandidateError, CodingModelBackend, load_backend
 from agent.critic import critique_failure
 from agent.context import build_context
 from agent.exact_tools import execute_exact_task
@@ -180,6 +180,13 @@ def _finalize(
 
 def _empty_attempt_history() -> tuple[AttemptRecord, ...]:
     return ()
+
+
+def _backend_status_with_failure(backend_status: Dict, exc: BackendCandidateError) -> Dict:
+    updated = dict(backend_status)
+    updated["last_failure_class"] = exc.failure_class
+    updated["last_failure_reason"] = exc.message
+    return updated
 
 
 def _attempt_record(
@@ -557,6 +564,24 @@ def solve_task(
             context=context,
             plan=plan,
         )
+    except BackendCandidateError as exc:
+        backend_status = _backend_status_with_failure(backend_status, exc)
+        return _finalize(
+            run_id=run_id,
+            run_dir=run_dir,
+            operation="solve",
+            request=request,
+            route=route,
+            backend_status=backend_status,
+            plan=plan,
+            context=context,
+            verification=_empty_verification("backend could not produce an initial candidate"),
+            status=SOLVE_STATUS_BLOCKED,
+            files_touched=[],
+            blocked_reason=f"backend initial candidate generation failed: {exc.failure_class}: {exc.message}",
+            retry_budget=retry_budget,
+            attempts=tuple(attempts),
+        )
     except (OSError, ValueError, KeyError) as exc:
         return _finalize(
             run_id=run_id,
@@ -645,6 +670,11 @@ def solve_task(
                 previous_candidate=current_candidate,
                 attempt_history=tuple(attempts),
             )
+        except BackendCandidateError as exc:
+            backend_status = _backend_status_with_failure(backend_status, exc)
+            status = SOLVE_STATUS_BLOCKED
+            blocked_reason = f"backend repair candidate generation failed: {exc.failure_class}: {exc.message}"
+            break
         except (OSError, ValueError, KeyError) as exc:
             status = SOLVE_STATUS_BLOCKED
             blocked_reason = f"backend repair candidate generation failed: {exc}"
@@ -656,15 +686,22 @@ def solve_task(
         current_candidate = next_candidate
 
     if status == SOLVE_STATUS_VERIFIED and optimize and winning_candidate is not None:
-        optimization_status, optimization_attempt, optimized_candidate, optimization_touched = run_optimizer(
-            request=request,
-            context=context,
-            plan=plan,
-            backend=backend,
-            winning_candidate=winning_candidate,
-            attempt_history=tuple(attempts),
-            run_dir=run_dir,
-        )
+        try:
+            optimization_status, optimization_attempt, optimized_candidate, optimization_touched = run_optimizer(
+                request=request,
+                context=context,
+                plan=plan,
+                backend=backend,
+                winning_candidate=winning_candidate,
+                attempt_history=tuple(attempts),
+                run_dir=run_dir,
+            )
+        except BackendCandidateError as exc:
+            backend_status = _backend_status_with_failure(backend_status, exc)
+            optimization_status = "blocked_unverified"
+            optimization_attempt = None
+            optimized_candidate = None
+            optimization_touched = []
         if optimization_attempt is not None:
             attempts.append(optimization_attempt)
         if optimized_candidate is not None and optimization_attempt is not None:

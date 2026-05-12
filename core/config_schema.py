@@ -350,13 +350,20 @@ class AgentSection(_StrictModel):
     report_dir: str
     backend_kind: str
     backend_script_path: str | None = None
+    backend_model_id_or_path: str | None = None
+    backend_local_files_only: bool = True
+    backend_trust_remote_code: bool = False
+    backend_device: str = "auto"
+    backend_max_new_tokens: int = Field(ge=1)
+    backend_temperature: float = Field(ge=0)
+    backend_prompt_max_chars: int = Field(ge=512)
     max_file_excerpt_chars: int = Field(ge=256)
     default_retry_budget: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_backend_kind(self):
-        if self.backend_kind not in {"none", "scripted"}:
-            raise ValueError("agent.backend_kind must be one of: none, scripted")
+        if self.backend_kind not in {"none", "scripted", "local_transformers_in_process"}:
+            raise ValueError("agent.backend_kind must be one of: none, scripted, local_transformers_in_process")
         return self
 
 

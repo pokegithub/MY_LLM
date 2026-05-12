@@ -5,6 +5,7 @@ Usage:
   python run.py agent-plan     Build a machine-readable agent plan
   python run.py agent-solve    Run the verified coding-agent solve path
   python run.py agent-verify   Run the verified coding-agent verify path
+  python run.py agent-backend-smoke Check configured coding backend load and candidate schema
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -156,6 +157,7 @@ def check_dependencies(command: str):
         "agent-plan": {},
         "agent-solve": {},
         "agent-verify": {},
+        "agent-backend-smoke": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -485,6 +487,32 @@ def run_agent_verify(args):
         _emit_json(payload)
         return
     _print_agent_report("AGENT VERIFY", payload)
+
+
+def run_agent_backend_smoke(args):
+    from agent.backend import backend_smoke_report
+
+    payload = backend_smoke_report(workspace_root=".")
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("AGENT BACKEND SMOKE")
+    print("=" * 60)
+    print(f"  backend_kind      : {payload.get('backend_kind', 'unknown')}")
+    print(f"  configured_model  : {payload.get('configured_model') or 'none'}")
+    print(f"  backend_available : {str(payload.get('backend_available')).lower()}")
+    print(f"  load_status       : {payload.get('load_status')}")
+    print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
+    print(f"  generation_status : {payload.get('tiny_candidate_generation_status')}")
+    if payload.get("failure_class"):
+        print(f"  failure_class     : {payload.get('failure_class')}")
+    if payload.get("failure_reason"):
+        print(f"  failure_reason    : {payload.get('failure_reason')}")
+    print(f"  proves_coding     : {str(payload.get('proves_real_coding_ability')).lower()}")
+    print(f"  quality_claim     : {payload.get('quality_claim')}")
+    print("=" * 60)
 
 
 def _print_trajectory_summary(title: str, payload: dict):
@@ -1619,6 +1647,7 @@ Commands:
   agent-plan   Build a machine-readable agent plan for one task
   agent-solve  Run the verified coding-agent solve path
   agent-verify Run the verified coding-agent verify path
+  agent-backend-smoke Check configured coding backend load and candidate schema
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1660,6 +1689,7 @@ Commands:
         "command",
         choices=[
             "agent-plan", "agent-solve", "agent-verify",
+            "agent-backend-smoke",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -1792,6 +1822,7 @@ Commands:
         "agent-plan": lambda: run_agent_plan(args),
         "agent-solve": lambda: run_agent_solve(args),
         "agent-verify": lambda: run_agent_verify(args),
+        "agent-backend-smoke": lambda: run_agent_backend_smoke(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),

@@ -1,0 +1,240 @@
+import json
+import os
+import sys
+import tempfile
+import types
+import unittest
+from contextlib import contextmanager
+from unittest.mock import patch
+
+from agent.backend import BackendLoadError, backend_smoke_report, candidate_from_model_text, load_backend
+from agent.orchestrator import solve_task
+from agent.trajectory import build_trajectory_record
+from agent.trajectory_quality import SFT_POSITIVE, classify_trajectory
+from agent.types import SOLVE_STATUS_BLOCKED, SOLVE_STATUS_VERIFIED, TaskRequest
+from config import agent_cfg
+
+
+@contextmanager
+def agent_config_overrides(**overrides):
+    old_values = {key: getattr(agent_cfg, key) for key in overrides}
+    try:
+        for key, value in overrides.items():
+            setattr(agent_cfg, key, value)
+        yield
+    finally:
+        for key, value in old_values.items():
+            setattr(agent_cfg, key, value)
+
+
+def fake_transformers_module(output_text: str):
+    class FakeTokenizer:
+        def __call__(self, prompt, return_tensors=None):
+            return {"input_ids": [[1, 2, 3]]}
+
+        def decode(self, generated, skip_special_tokens=True):
+            return output_text
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def generate(self, **kwargs):
+            return [[1, 2, 3, 4]]
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeTokenizer()
+
+    class AutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeModel()
+
+    return types.SimpleNamespace(
+        AutoTokenizer=AutoTokenizer,
+        AutoModelForCausalLM=AutoModelForCausalLM,
+    )
+
+
+def valid_candidate_json(path="demo.py", content="def add(a, b):\n    return a + b\n"):
+    return json.dumps(
+        {
+            "candidate_id": "model-fix",
+            "summary": "repair add behavior",
+            "edits": [{"path": path, "new_content": content}],
+        }
+    )
+
+
+class TransformersBackendMvpTests(unittest.TestCase):
+    def test_no_backend_coding_task_still_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            with agent_config_overrides(
+                backend_kind="none",
+                backend_model_id_or_path=None,
+                report_dir=os.path.join(td, "agent_reports"),
+            ):
+                payload = solve_task(
+                    TaskRequest(
+                        task_text="Fix the bug in demo.py",
+                        file_hints=("demo.py",),
+                        checks=("compileall:demo.py",),
+                        workspace_root=td,
+                    )
+                )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
+        self.assertEqual(payload["backend_status"]["kind"], "none")
+        self.assertEqual(payload["backend_status"]["failure_class"], "backend_not_configured")
+
+    def test_exact_symbolic_task_bypasses_configured_backend(self):
+        with tempfile.TemporaryDirectory() as td:
+            with agent_config_overrides(
+                backend_kind="local_transformers_in_process",
+                backend_model_id_or_path=None,
+                report_dir=os.path.join(td, "agent_reports"),
+            ):
+                payload = solve_task(
+                    TaskRequest(
+                        task_text='count substring "ana" in "banana"',
+                        workspace_root=td,
+                    )
+                )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_VERIFIED)
+        self.assertEqual(payload["final_origin"], "deterministic_exact_tool")
+        self.assertEqual(payload["backend_status"]["kind"], "deterministic_exact_tool")
+
+    def test_configured_fake_transformers_backend_can_produce_verified_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            module_path = os.path.join(td, "demo.py")
+            test_path = os.path.join(td, "test_demo.py")
+            with open(module_path, "w", encoding="utf-8") as handle:
+                handle.write("def add(a, b):\n    return a - b\n")
+            with open(test_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "import unittest\n"
+                    "from demo import add\n\n"
+                    "class DemoTests(unittest.TestCase):\n"
+                    "    def test_add(self):\n"
+                    "        self.assertEqual(add(2, 3), 5)\n"
+                )
+
+            fake_module = fake_transformers_module(valid_candidate_json())
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                    report_dir=os.path.join(td, "agent_reports"),
+                ):
+                    payload = solve_task(
+                        TaskRequest(
+                            task_text="Fix add() in demo.py",
+                            file_hints=("demo.py",),
+                            checks=("unittest:discover -s . -p test_demo.py -v", "compileall:demo.py"),
+                            workspace_root=td,
+                        )
+                    )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_VERIFIED)
+        self.assertEqual(payload["backend_status"]["kind"], "local_transformers_in_process")
+        self.assertEqual(payload["final_origin"], "initial")
+        self.assertEqual(payload["candidate"]["source"], "local_transformers_initial")
+        self.assertEqual(payload["quality_claim"], "verification_passed")
+        trajectory = build_trajectory_record(payload)
+        quality = classify_trajectory(trajectory)
+        self.assertIn(SFT_POSITIVE, quality["quality_classes"])
+
+    def test_malformed_backend_output_is_rejected_before_candidate_use(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_module("Here is the fix in prose, not JSON.")
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                    report_dir=os.path.join(td, "agent_reports"),
+                ):
+                    payload = solve_task(
+                        TaskRequest(
+                            task_text="Fix demo.py",
+                            file_hints=("demo.py",),
+                            checks=("compileall:demo.py",),
+                            workspace_root=td,
+                        )
+                    )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
+        self.assertIn("malformed_candidate_output", payload["blocked_reason"])
+        self.assertEqual(payload["backend_status"]["last_failure_class"], "malformed_candidate_output")
+        self.assertEqual(payload["attempts"], [])
+
+    def test_unsafe_backend_edit_path_is_rejected_before_candidate_use(self):
+        with tempfile.TemporaryDirectory() as td:
+            unsafe_output = valid_candidate_json(path="../escape.py")
+            fake_module = fake_transformers_module(unsafe_output)
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                    report_dir=os.path.join(td, "agent_reports"),
+                ):
+                    payload = solve_task(
+                        TaskRequest(
+                            task_text="Fix demo.py",
+                            file_hints=("demo.py",),
+                            checks=("compileall:demo.py",),
+                            workspace_root=td,
+                        )
+                    )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
+        self.assertIn("schema_validation_failed", payload["blocked_reason"])
+        self.assertFalse(os.path.exists(os.path.join(td, "..", "escape.py")))
+
+    def test_backend_unavailable_surfaces_without_silent_fallback(self):
+        with tempfile.TemporaryDirectory() as td:
+            with patch(
+                "agent.backend._import_transformers_module",
+                side_effect=BackendLoadError("backend_unavailable", "transformers package is not installed"),
+            ):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    backend, status = load_backend(workspace_root=td)
+
+        self.assertIsNone(backend)
+        self.assertFalse(status["available"])
+        self.assertEqual(status["kind"], "local_transformers_in_process")
+        self.assertEqual(status["failure_class"], "backend_unavailable")
+
+    def test_backend_smoke_reports_schema_parse_success_without_claiming_coding_ability(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_module(
+                valid_candidate_json(path="backend_smoke_target.py", content="def value():\n    return 2\n")
+            )
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertEqual(report["schema"], "agent_backend_smoke_v1")
+        self.assertTrue(report["backend_available"])
+        self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertEqual(report["tiny_candidate_generation_status"], "candidate_generated")
+        self.assertFalse(report["proves_real_coding_ability"])
+        self.assertEqual(report["quality_claim"], "none")
+
+    def test_candidate_parser_rejects_plain_prose(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text("plain prose", source="test", workspace_root=td)
+        self.assertIn("malformed_candidate_output", str(caught.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

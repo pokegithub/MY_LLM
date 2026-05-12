@@ -14,8 +14,8 @@
 ### Last synchronization
 
 - Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, and Phase A trajectory-quality audit artifacts. This was not a brand-new full-model audit.
-- Module count: 89 Python modules.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, and the Phase A in-process Transformers backend MVP. This was not a brand-new full-model audit.
+- Module count: 90 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -158,6 +158,18 @@
 - The audit separates exact deterministic traces, scripted/fixture traces, backendless blocked runs, and failed runs from strict positive SFT eligibility.
 - This package does not train, tune, execute exports, run hidden evals, or claim model improvement.
 
+### Phase A in-process backend MVP update
+
+- Date: 2026-05-12
+- Scope: Added the first explicitly configured local Transformers backend path for backend-backed coding candidates.
+- New CLI command:
+  - `agent-backend-smoke`
+- `agent/backend.py` now supports `agent.backend_kind: local_transformers_in_process` with an explicit `agent.backend_model_id_or_path`. It uses local model files by default and does not auto-download a model.
+- Generated backend output must be strict JSON that validates into the existing `Candidate` and `FileEdit` contract before the agent can apply it.
+- Malformed JSON, schema violations, unsafe edit paths, missing backend configuration, unavailable Transformers dependencies, and model-load failures surface as explicit backend failure classes.
+- Exact symbolic tasks still bypass backend loading entirely, and verifier authority over solve success is unchanged.
+- The smoke command checks backend load and candidate-schema parsing only. It does not run a bakeoff, hidden eval, training, retrieval, or claim model quality.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth
@@ -282,7 +294,7 @@
 
 - `serving/server.py`
 
-#### tests/ (23)
+#### tests/ (24)
 
 - `tests/test_agent_phase1.py`
 - `tests/test_agent_phase2.py`
@@ -306,6 +318,7 @@
 - `tests/test_retrieval_design_assets.py`
 - `tests/test_serving_truthfulness.py`
 - `tests/test_training_safety.py`
+- `tests/test_transformers_backend_mvp.py`
 - `tests/test_trajectory_quality.py`
 
 ---
@@ -356,6 +369,7 @@ Primary architectural planes:
 - `agent-plan`
 - `agent-solve`
 - `agent-verify`
+- `agent-backend-smoke`
 - `trajectory-list`
 - `trajectory-show`
 - `trajectory-search`
@@ -425,6 +439,7 @@ Primary architectural planes:
 - `agent-plan`: writes a machine-readable planning report without claiming solve success
 - `agent-solve`: runs the verified coding-agent solve path, including deterministic exact-task handling, bounded repair attempts, and optional post-green optimization
 - `agent-verify`: runs agent-side verification only and does not fabricate a candidate
+- `agent-backend-smoke`: reports configured backend load and strict candidate-schema parsing status without claiming coding ability or bakeoff success
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning

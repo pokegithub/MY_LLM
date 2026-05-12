@@ -700,6 +700,13 @@ class AgentConfig:
     report_dir              : str = "./run_artifacts/agent"
     backend_kind            : str = "none"
     backend_script_path     : Optional[str] = None
+    backend_model_id_or_path: Optional[str] = None
+    backend_local_files_only: bool = True
+    backend_trust_remote_code: bool = False
+    backend_device          : str = "auto"
+    backend_max_new_tokens  : int = 1024
+    backend_temperature     : float = 0.0
+    backend_prompt_max_chars: int = 12000
     max_file_excerpt_chars  : int = 4000
     default_retry_budget    : int = 3
 
