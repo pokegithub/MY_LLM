@@ -1,0 +1,99 @@
+{
+  "schema": "retrieval_source_policy_v1",
+  "version": "v1",
+  "status": "planned_not_implemented",
+  "legal_clearance_claim": "none",
+  "source_classes": [
+    {
+      "class_id": "allowed",
+      "retrieval_allowed": true,
+      "citation_allowed": true,
+      "answering_allowed": true,
+      "abstain_only": false,
+      "provenance_required": [
+        "stable_local_path_or_manifest_reference",
+        "document_identity",
+        "allowlisted_source_class"
+      ],
+      "phase_a_examples": [
+        "SYSTEM_MAP.md",
+        "data_governance/allowed_corpus_manifest_v1.json",
+        "run_artifacts/runtime_config_effective_*.json"
+      ]
+    },
+    {
+      "class_id": "restricted",
+      "retrieval_allowed": false,
+      "citation_allowed": false,
+      "answering_allowed": false,
+      "abstain_only": true,
+      "provenance_required": [
+        "explicit_operator_approval",
+        "future_verifier_checkable_citation_path"
+      ],
+      "phase_a_examples": [
+        "Anthropic/hh-rlhf dataset content",
+        "future approved external local documents"
+      ]
+    },
+    {
+      "class_id": "blocked",
+      "retrieval_allowed": false,
+      "citation_allowed": false,
+      "answering_allowed": false,
+      "abstain_only": true,
+      "provenance_required": [
+        "none_until_policy_changes"
+      ],
+      "phase_a_examples": [
+        "wikimedia/wikipedia",
+        "HuggingFaceH4/ultrachat_200k",
+        "Open-Orca/SlimOrca"
+      ]
+    },
+    {
+      "class_id": "benchmark_excluded",
+      "retrieval_allowed": false,
+      "citation_allowed": false,
+      "answering_allowed": false,
+      "abstain_only": true,
+      "provenance_required": [
+        "none"
+      ],
+      "phase_a_examples": [
+        "truthful_qa",
+        "google/boolq",
+        "allenai/ai2_arc",
+        "winogrande",
+        "openai/gsm8k",
+        "evals/hidden/*"
+      ]
+    },
+    {
+      "class_id": "unknown",
+      "retrieval_allowed": false,
+      "citation_allowed": false,
+      "answering_allowed": false,
+      "abstain_only": true,
+      "provenance_required": [
+        "source_classification_required_before_use"
+      ],
+      "phase_a_examples": [
+        "unclassified local docs",
+        "external text without source metadata"
+      ]
+    }
+  ],
+  "phase_a_resolution_examples": [
+    {
+      "source_ref": "Anthropic/hh-rlhf",
+      "retrieval_class": "restricted",
+      "reason": "Repo-policy training allowance does not imply retrieval approval for dataset content."
+    },
+    {
+      "source_ref": "evals/hidden/hidden_eval_seed_set_v1.jsonl",
+      "retrieval_class": "benchmark_excluded",
+      "reason": "Hidden-eval materials must stay out of retrieval."
+    }
+  ]
+}

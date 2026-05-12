@@ -1,0 +1,49 @@
+{
+  "schema": "retrieval_verifier_contract_v1",
+  "version": "v1",
+  "status": "planned_not_implemented",
+  "verifier_authority": "required",
+  "checks": [
+    {
+      "check_id": "citation_presence_for_source_grounded_answers",
+      "outcome_on_fail": "verification_failed"
+    },
+    {
+      "check_id": "source_policy_compliance",
+      "outcome_on_fail": "blocked_unverified_or_verification_failed"
+    },
+    {
+      "check_id": "locator_resolvability",
+      "outcome_on_fail": "verification_failed"
+    },
+    {
+      "check_id": "claim_support_alignment",
+      "outcome_on_fail": "verification_failed"
+    },
+    {
+      "check_id": "contradiction_and_insufficient_evidence_handling",
+      "outcome_on_fail": "verification_failed"
+    },
+    {
+      "check_id": "benchmark_exclusion_compliance",
+      "outcome_on_fail": "blocked_unverified"
+    }
+  ],
+  "verification_pass_requires": [
+    "valid_citations",
+    "policy_allowed_sources",
+    "supporting_evidence_for_each_asserted_claim",
+    "no_benchmark_or_hidden_eval_leakage"
+  ],
+  "blocked_conditions": [
+    "retrieval_required_but_unavailable",
+    "only_policy_prohibited_sources_available",
+    "required_source_grounding_cannot_be_obtained_honestly"
+  ],
+  "deferred_checks": [
+    "retriever_execution_path_checks",
+    "semantic_ranking_diagnostics",
+    "web_freshness_checks",
+    "production_latency_thresholds"
+  ]
+}

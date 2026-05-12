@@ -1,0 +1,140 @@
+{
+  "schema": "trajectory_quality_schema_v1",
+  "version": "v1",
+  "learning_claim": "none",
+  "model_improvement_claim": "none",
+  "quality_classes": [
+    {
+      "class_id": "sft_positive_eligible",
+      "required_status": ["verified_success"],
+      "allowed_routes": ["coding_edit"],
+      "backend_requirements": ["real_model_backend_required"],
+      "verifier_requirements": ["meaningful_verifier_pass", "quality_claim_verification_passed"],
+      "provenance_requirements": ["run_id", "operation", "task_text", "route", "status", "files_touched", "attempts"],
+      "allowed_future_use": ["future_sft_positive_candidate"],
+      "prohibited_future_use": ["legal_clearance_claim", "model_improvement_claim"],
+      "required_reason_fields": ["verifier_passed", "real_backend_present", "non_fixture_task"]
+    },
+    {
+      "class_id": "preference_winner_eligible",
+      "required_status": ["verified_success"],
+      "allowed_routes": ["coding_edit"],
+      "backend_requirements": ["real_model_backend_required"],
+      "verifier_requirements": ["kept_winner_passed", "loser_attempt_failed"],
+      "provenance_requirements": ["attempts", "winning_attempt"],
+      "allowed_future_use": ["future_preference_winner_candidate"],
+      "prohibited_future_use": ["vibe_based_preference"],
+      "required_reason_fields": ["winner_passed_verification", "loser_failed_verification"]
+    },
+    {
+      "class_id": "preference_loser_eligible",
+      "required_status": ["verification_failed", "verified_success"],
+      "allowed_routes": ["coding_edit"],
+      "backend_requirements": ["candidate_attempt_present"],
+      "verifier_requirements": ["meaningful_verifier_failure"],
+      "provenance_requirements": ["attempts", "failure_classes"],
+      "allowed_future_use": ["future_preference_loser_candidate"],
+      "prohibited_future_use": ["positive_sft_demonstration"],
+      "required_reason_fields": ["verifier_failed"]
+    },
+    {
+      "class_id": "retrieval_memory_eligible",
+      "required_status": ["verified_success", "verification_failed", "blocked_unverified", "unsupported", "plan_ready"],
+      "allowed_routes": ["exact_symbolic", "coding_edit", "unsupported"],
+      "backend_requirements": ["none"],
+      "verifier_requirements": ["status_label_preserved"],
+      "provenance_requirements": ["run_id", "task_text", "status", "route"],
+      "allowed_future_use": ["future_labeled_retrieval_memory"],
+      "prohibited_future_use": ["unlabeled_success_claim"],
+      "required_reason_fields": ["status_label_preserved"]
+    },
+    {
+      "class_id": "failure_analysis_eligible",
+      "required_status": ["verification_failed", "blocked_unverified", "unsupported"],
+      "allowed_routes": ["coding_edit", "unsupported"],
+      "backend_requirements": ["none"],
+      "verifier_requirements": ["failure_or_blocked_reason_present"],
+      "provenance_requirements": ["run_id", "status", "blocked_reason_or_failure_classes"],
+      "allowed_future_use": ["future_failure_analysis"],
+      "prohibited_future_use": ["positive_demonstration"],
+      "required_reason_fields": ["failure_or_blocked_reason"]
+    },
+    {
+      "class_id": "exact_tool_curriculum_only",
+      "required_status": ["verified_success"],
+      "allowed_routes": ["exact_symbolic"],
+      "backend_requirements": ["deterministic_exact_tool"],
+      "verifier_requirements": ["exact_validation_passed"],
+      "provenance_requirements": ["task_text", "final_origin"],
+      "allowed_future_use": ["future_exact_tool_routing_curriculum"],
+      "prohibited_future_use": ["general_coding_sft"],
+      "required_reason_fields": ["deterministic_exact_tool"]
+    },
+    {
+      "class_id": "fixture_only",
+      "required_status": ["verified_success", "verification_failed", "blocked_unverified"],
+      "allowed_routes": ["coding_edit"],
+      "backend_requirements": ["any"],
+      "verifier_requirements": ["none"],
+      "provenance_requirements": ["fixture_marker"],
+      "allowed_future_use": ["orchestration_test_audit"],
+      "prohibited_future_use": ["positive_training_data"],
+      "required_reason_fields": ["fixture_marker"]
+    },
+    {
+      "class_id": "backendless_blocked",
+      "required_status": ["blocked_unverified"],
+      "allowed_routes": ["coding_edit"],
+      "backend_requirements": ["backend_kind_none"],
+      "verifier_requirements": ["blocked_reason_present"],
+      "provenance_requirements": ["blocked_reason"],
+      "allowed_future_use": ["blocked_state_memory", "failure_analysis"],
+      "prohibited_future_use": ["positive_training_data"],
+      "required_reason_fields": ["no_backend_configured"]
+    },
+    {
+      "class_id": "blocked_unverified",
+      "required_status": ["blocked_unverified"],
+      "allowed_routes": ["coding_edit", "unsupported"],
+      "backend_requirements": ["none"],
+      "verifier_requirements": ["not_verified"],
+      "provenance_requirements": ["blocked_reason"],
+      "allowed_future_use": ["blocked_state_memory"],
+      "prohibited_future_use": ["verified_success_claim"],
+      "required_reason_fields": ["blocked_reason"]
+    },
+    {
+      "class_id": "insufficient_provenance",
+      "required_status": ["unknown"],
+      "allowed_routes": ["unknown"],
+      "backend_requirements": ["unknown"],
+      "verifier_requirements": ["unknown"],
+      "provenance_requirements": ["missing_fields_reported"],
+      "allowed_future_use": ["audit_only"],
+      "prohibited_future_use": ["training_data"],
+      "required_reason_fields": ["missing_required_provenance"]
+    },
+    {
+      "class_id": "rejected_low_value",
+      "required_status": ["plan_ready", "unsupported", "verified_success", "verification_failed"],
+      "allowed_routes": ["exact_symbolic", "coding_edit", "unsupported"],
+      "backend_requirements": ["none"],
+      "verifier_requirements": ["none"],
+      "provenance_requirements": ["rejection_reason"],
+      "allowed_future_use": ["audit_only"],
+      "prohibited_future_use": ["positive_training_data"],
+      "required_reason_fields": ["low_value_reason"]
+    },
+    {
+      "class_id": "unknown_unclassified",
+      "required_status": ["unknown"],
+      "allowed_routes": ["unknown"],
+      "backend_requirements": ["unknown"],
+      "verifier_requirements": ["unknown"],
+      "provenance_requirements": ["manual_review_required"],
+      "allowed_future_use": ["manual_review_only"],
+      "prohibited_future_use": ["training_data"],
+      "required_reason_fields": ["manual_review_required"]
+    }
+  ]
+}

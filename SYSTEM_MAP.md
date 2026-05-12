@@ -13,9 +13,9 @@
 
 ### Last synchronization
 
-- Date: 2026-05-03
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, and the Phase A backend integration planning artifacts. This was not a brand-new full-model audit.
-- Module count: 92 Python modules.
+- Date: 2026-05-12
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, and the Phase A retrieval-design planning artifacts. This was not a brand-new full-model audit.
+- Module count: 93 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -133,6 +133,18 @@
 - `backend_integration/backend_capability_gate_v1.*` defines the minimum integration bar: structured candidate validity, parse reliability, usefulness over the no-backend baseline, exact-task bypass preservation, verifier compatibility, retry-loop compatibility, and workstation runtime stability.
 - `backend_integration/backend_failure_contract_v1.*` defines explicit backend failure classes and keeps backend failures from being misreported as successful solves.
 - This package does not integrate a backend. It defines the first honest path and its gates only.
+
+### Phase A retrieval design planning update
+
+- Date: 2026-05-12
+- Scope: Added a narrow first-phase retrieval design package under `retrieval_design/`.
+- The chosen first retrieval scope is intentionally narrower than a generic RAG story: repo-authored local documentation plus repo-generated local manifests and reports only.
+- External dataset content, downloaded corpora, benchmark exclusions, and all hidden-eval artifacts remain out of the first retrieval scope.
+- `retrieval_design/retrieval_design_v1.*` defines the scope, non-goals, and explicit deferrals.
+- `retrieval_design/retrieval_source_policy_v1.*` defines source classes and makes clear that repo-policy training allowance does not imply retrieval approval.
+- `retrieval_design/citation_contract_v1.*` defines a checkable citation structure and states that citations are evidence references, not proof by themselves.
+- `retrieval_design/retrieval_abstention_policy_v1.md`, `retrieval_design/retrieval_verifier_contract_v1.*`, and `retrieval_design/retrieval_benchmark_exclusion_policy_v1.md` define fallback behavior, verifier authority, and hidden/benchmark exclusion handling.
+- This package does not implement retrieval, vector search, web search, or memory.
 
 ---
 
@@ -252,7 +264,7 @@
 
 - `serving/server.py`
 
-#### tests/ (21)
+#### tests/ (22)
 
 - `tests/test_agent_phase1.py`
 - `tests/test_agent_phase2.py`
@@ -273,6 +285,7 @@
 - `tests/test_kv_cache.py`
 - `tests/test_model_shapes.py`
 - `tests/test_quantization_truthfulness.py`
+- `tests/test_retrieval_design_assets.py`
 - `tests/test_serving_truthfulness.py`
 - `tests/test_training_safety.py`
 

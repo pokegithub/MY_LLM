@@ -1,0 +1,38 @@
+{
+  "schema": "citation_contract_v1",
+  "version": "v1",
+  "status": "planned_not_implemented",
+  "citation_granularity": "claim_level_with_checkable_locator",
+  "required_fields": [
+    "citation_id",
+    "source_class",
+    "source_id",
+    "document_ref",
+    "locator_type",
+    "locator",
+    "support_kind",
+    "support_snippet_hash"
+  ],
+  "allowed_locator_types": [
+    "line_range",
+    "section_heading",
+    "json_pointer"
+  ],
+  "multi_source_support_allowed": true,
+  "citation_missing_forces": [
+    "not_source_grounded",
+    "abstain_or_need_source_when_source_grounding_is_required"
+  ],
+  "insufficient_citation_conditions": [
+    "missing_required_field",
+    "unresolvable_locator",
+    "blocked_or_unknown_source_class",
+    "support_does_not_back_claim"
+  ],
+  "distinctions": {
+    "cited_answer": "Contains one or more citation objects satisfying the required fields.",
+    "uncited_answer": "Contains no valid citation object and cannot count as source-grounded.",
+    "cited_but_insufficiently_supported_answer": "Contains citations, but the cited material does not support the claim strongly enough."
+  },
+  "proof_note": "A citation is an evidence reference, not proof by itself."
+}

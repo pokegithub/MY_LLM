@@ -1,0 +1,39 @@
+{
+  "schema": "retrieval_design_v1",
+  "version": "v1",
+  "status": "planned_not_implemented",
+  "purpose": "Define the first truthful retrieval scope for repo-grounded answering without weakening abstention or verifier authority.",
+  "primary_scope": {
+    "scope_count": 1,
+    "scope_id": "repo_local_docs_and_manifests_only",
+    "allowed_document_classes": [
+      "repo_authored_local_docs",
+      "repo_generated_local_manifests"
+    ],
+    "non_goals": [
+      "downloaded_training_corpora",
+      "benchmark_datasets",
+      "hidden_eval_artifacts",
+      "broad_web_search",
+      "memory_layers",
+      "vector_or_semantic_retrieval"
+    ],
+    "rationale": "The narrow first scope keeps provenance checkable, aligns with the current governance posture, and avoids turning retrieval into a broad unsupported-answer fallback.",
+    "target_environment": "linux_first_workstation_path",
+    "status": "planned_not_implemented"
+  },
+  "must_not_break": [
+    "deterministic_exact_task_bypass",
+    "verifier_authority",
+    "blocked_unverified_truthfulness",
+    "benchmark_exclusion_rules"
+  ],
+  "explicitly_deferred": [
+    "retrieval_implementation",
+    "embeddings_and_vector_indexing",
+    "web_search",
+    "memory_integration",
+    "broad_document_ingestion",
+    "semantic_ranking"
+  ]
+}
