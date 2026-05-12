@@ -14,8 +14,8 @@
 ### Last synchronization
 
 - Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, and the Phase A retrieval-design planning artifacts. This was not a brand-new full-model audit.
-- Module count: 93 Python modules.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, and Phase A trajectory-quality audit artifacts. This was not a brand-new full-model audit.
+- Module count: 89 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
@@ -146,6 +146,18 @@
 - `retrieval_design/retrieval_abstention_policy_v1.md`, `retrieval_design/retrieval_verifier_contract_v1.*`, and `retrieval_design/retrieval_benchmark_exclusion_policy_v1.md` define fallback behavior, verifier authority, and hidden/benchmark exclusion handling.
 - This package does not implement retrieval, vector search, web search, or memory.
 
+### Phase A trajectory quality audit update
+
+- Date: 2026-05-12
+- Scope: Added a strict trajectory-quality filter and audit surface for future training-use safety.
+- New CLI command:
+  - `trajectory-quality-audit`
+- `trajectory_quality/trajectory_quality_policy_v1.md` defines future-use buckets for SFT-positive, preference winner/loser, retrieval memory, failure analysis, exact-tool curriculum, fixture-only, backendless-blocked, and rejected traces.
+- `trajectory_quality/trajectory_quality_schema_v1.json` defines the machine-readable quality taxonomy and explicitly keeps `learning_claim: none` and `model_improvement_claim: none`.
+- `agent/trajectory_quality.py` classifies existing trajectories deterministically and writes machine-readable audit reports under `run_artifacts/trajectory_quality/<audit_id>/report.json`.
+- The audit separates exact deterministic traces, scripted/fixture traces, backendless blocked runs, and failed runs from strict positive SFT eligibility.
+- This package does not train, tune, execute exports, run hidden evals, or claim model improvement.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth
@@ -189,7 +201,7 @@
 - `train.py`
 - `train_tokenizer.py`
 
-#### agent/ (15)
+#### agent/ (16)
 
 - `agent/__init__.py`
 - `agent/backend.py`
@@ -203,6 +215,7 @@
 - `agent/retrieval.py`
 - `agent/router.py`
 - `agent/trajectory.py`
+- `agent/trajectory_quality.py`
 - `agent/types.py`
 - `agent/verify.py`
 - `agent/workspace.py`
@@ -240,6 +253,11 @@
 - `eval_harness/runner.py`
 - `eval_harness/statistical_tests.py`
 
+#### evals/ (2)
+
+- `evals/hidden/fixtures/coding_patch/math_ops.py`
+- `evals/hidden/fixtures/coding_repair/slug_tools.py`
+
 #### observability/ (6)
 
 - `observability/__init__.py`
@@ -264,7 +282,7 @@
 
 - `serving/server.py`
 
-#### tests/ (22)
+#### tests/ (23)
 
 - `tests/test_agent_phase1.py`
 - `tests/test_agent_phase2.py`
@@ -288,6 +306,7 @@
 - `tests/test_retrieval_design_assets.py`
 - `tests/test_serving_truthfulness.py`
 - `tests/test_training_safety.py`
+- `tests/test_trajectory_quality.py`
 
 ---
 
@@ -343,6 +362,7 @@ Primary architectural planes:
 - `trajectory-export-sft`
 - `trajectory-export-preferences`
 - `trajectory-export-retrieval`
+- `trajectory-quality-audit`
 - `tokenizer`
 - `download`
 - `download-safe`
@@ -407,6 +427,7 @@ Primary architectural planes:
 - `agent-verify`: runs agent-side verification only and does not fabricate a candidate
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
+- `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning
 - `audit`: Pass 1 truthfulness checks covering compile, tokenizer smoke, status health, fake-serving detection, and quantization report integrity
 
 ---
@@ -1226,6 +1247,7 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `tests/test_kv_cache.py`: bounded local KV cache checks
 - `tests/test_model_shapes.py`: dense GQA model shape and generation checks
 - `tests/test_quantization_truthfulness.py`: quantization report contract checks
+- `tests/test_trajectory_quality.py`: trajectory-quality policy and audit filtering checks
 - `tests/test_serving_truthfulness.py`: fail-closed serving checks
 - `tests/test_training_safety.py`: preflight, checkpoint, tiny train, and real-token validation checks
 
