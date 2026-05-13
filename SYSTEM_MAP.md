@@ -188,6 +188,15 @@
 - `configs/backend_candidate_smoke_7b_example.json` and `configs/backend_candidate_smoke_14b_example.json` are local-only examples requiring user-provided reviewed checkpoint paths.
 - Full 7B/14B bakeoff remains unexecuted.
 
+### Phase A small candidate provisioning update
+
+- Date: 2026-05-13
+- Scope: Added autonomous provisioning for a small, ungated instruction-following Transformers smoke candidate. This is not the 7B/14B bakeoff and does not select a model.
+- `agent-backend-provision-small-candidate` tries the allowlisted priority order `HuggingFaceTB/SmolLM2-135M-Instruct` first, then `Qwen/Qwen2.5-Coder-0.5B-Instruct`; unlisted model ids are rejected by default.
+- Provisioned small candidates are stored under `run_artifacts/local_models/` and written to `configs/backend_smoke_small_candidate.json` for local-only backend smoke.
+- RTX 2050 4 GB remains appropriate for small smoke/integration checks, not full 7B/14B local bakeoff.
+- Small-model load, generation, structured JSON compliance, or a toy verifier pass is not model-quality evidence and must not inflate SFT-positive trajectory eligibility.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth
@@ -460,6 +469,7 @@ Primary architectural planes:
 - `agent-verify`: runs agent-side verification only and does not fabricate a candidate
 - `agent-backend-smoke`: reports configured backend load and strict candidate-schema parsing status without claiming coding ability or bakeoff success
 - `agent-backend-provision-tiny-model`: explicitly provisions an allowlisted tiny local Transformers smoke model; this is not model-quality or bakeoff evidence
+- `agent-backend-provision-small-candidate`: autonomously provisions an allowlisted small instruction-following backend smoke candidate without claiming model quality
 - `candidate-readiness-smoke`: checks one shortlisted candidate slot for local availability and pre-bakeoff structured-output readiness without selecting a winner
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model

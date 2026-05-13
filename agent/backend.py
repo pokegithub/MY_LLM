@@ -29,10 +29,26 @@ BACKEND_KIND_LOCAL_TRANSFORMERS = "local_transformers_in_process"
 BACKEND_KIND_TRANSFORMER_ALIASES = {BACKEND_KIND_LOCAL_TRANSFORMERS}
 DEFAULT_TINY_SMOKE_MODEL_ID = "hf-internal-testing/tiny-random-gpt2"
 DEFAULT_TINY_SMOKE_MODEL_DEST = "./run_artifacts/local_models/tiny-transformers-smoke"
+DEFAULT_SMALL_CANDIDATE_CONFIG = "./configs/backend_smoke_small_candidate.json"
 ALLOWED_TINY_SMOKE_MODEL_IDS = {
     "hf-internal-testing/tiny-random-gpt2",
     "sshleifer/tiny-gpt2",
 }
+SMALL_CANDIDATE_MODEL_OPTIONS = (
+    {
+        "model_id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "destination": "./run_artifacts/local_models/smollm2-135m-instruct",
+        "selection_reason": "first priority: very small open instruction-following smoke model",
+        "max_download_target_mb": 750,
+    },
+    {
+        "model_id": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+        "destination": "./run_artifacts/local_models/qwen2.5-coder-0.5b-instruct",
+        "selection_reason": "second priority: small coding-focused instruction smoke model",
+        "max_download_target_mb": 1800,
+    },
+)
+ALLOWED_SMALL_CANDIDATE_MODEL_IDS = {item["model_id"] for item in SMALL_CANDIDATE_MODEL_OPTIONS}
 STRUCTURED_CANDIDATE_CONTRACT_VERSION = "structured_candidate_contract_v1"
 MAX_FORMAT_RETRY_ATTEMPTS = 2
 
@@ -985,6 +1001,250 @@ def _directory_summary(path: Path) -> Dict[str, Any]:
     }
 
 
+def _looks_like_transformers_model_dir(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    has_config = (path / "config.json").is_file()
+    has_model = any(path.glob("*.safetensors")) or any(path.glob("pytorch_model*.bin"))
+    has_tokenizer = (path / "tokenizer.json").is_file() or (path / "tokenizer_config.json").is_file()
+    return has_config and has_model and has_tokenizer
+
+
+def _write_backend_config(path: str, model_path: Path, *, max_new_tokens: int = 512) -> str:
+    config_path = Path(path).resolve()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    rel_model_path = os.path.relpath(model_path, Path(os.getcwd()).resolve()).replace("\\", "/")
+    payload = {
+        "agent": {
+            "backend_kind": BACKEND_KIND_LOCAL_TRANSFORMERS,
+            "backend_model_id_or_path": f"./{rel_model_path}",
+            "backend_local_files_only": True,
+            "backend_trust_remote_code": False,
+            "backend_device": "auto",
+            "backend_max_new_tokens": max_new_tokens,
+            "backend_temperature": 0.0,
+            "backend_prompt_max_chars": 8000,
+        }
+    }
+    with open(config_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+    return str(config_path)
+
+
+def _download_and_save_transformers_model(
+    *,
+    transformers: Any,
+    model_id: str,
+    destination_path: Path,
+    source_schema: str,
+    source_payload: Mapping[str, Any],
+) -> None:
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_id,
+        local_files_only=False,
+        trust_remote_code=False,
+    )
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_id,
+        local_files_only=False,
+        trust_remote_code=False,
+    )
+    destination_path.mkdir(parents=True, exist_ok=True)
+    tokenizer.save_pretrained(str(destination_path))
+    model.save_pretrained(str(destination_path), safe_serialization=True)
+    payload = dict(source_payload)
+    payload["schema"] = source_schema
+    payload["model_id"] = model_id
+    with open(destination_path / "backend_model_source.json", "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def _candidate_options_for(model_id: Optional[str], destination: Optional[str]) -> tuple[Dict[str, Any], ...]:
+    if model_id:
+        if model_id not in ALLOWED_SMALL_CANDIDATE_MODEL_IDS:
+            return (
+                {
+                    "model_id": str(model_id),
+                    "destination": destination or "./run_artifacts/local_models/unlisted-small-candidate",
+                    "selection_reason": "rejected: model id is not in the small candidate allowlist",
+                    "rejected": True,
+                },
+            )
+        selected = next(item for item in SMALL_CANDIDATE_MODEL_OPTIONS if item["model_id"] == model_id)
+        candidate = dict(selected)
+        if destination:
+            candidate["destination"] = destination
+        return (candidate,)
+    candidates = [dict(item) for item in SMALL_CANDIDATE_MODEL_OPTIONS]
+    if destination and candidates:
+        candidates[0]["destination"] = destination
+    return tuple(candidates)
+
+
+def provision_small_candidate_model(
+    *,
+    model_id: Optional[str] = None,
+    destination: Optional[str] = None,
+    config_path: str = DEFAULT_SMALL_CANDIDATE_CONFIG,
+) -> Dict[str, Any]:
+    """Provision the first safe small instruction-following backend smoke candidate."""
+    report: Dict[str, Any] = {
+        "schema": "agent_backend_small_candidate_provision_v1",
+        "selection_policy": "priority_allowlist_small_instruction_models_only",
+        "priority_model_ids": [item["model_id"] for item in SMALL_CANDIDATE_MODEL_OPTIONS],
+        "selected_model_id": None,
+        "destination": None,
+        "config_path": str(Path(config_path).resolve()),
+        "downloaded_autonomously": False,
+        "internet_required": True,
+        "local_files_only_after_provisioning": True,
+        "smoke_only": True,
+        "proves_model_quality": False,
+        "bakeoff_winner_claim": "none",
+        "quality_claim": "none",
+        "status": "not_started",
+        "ok": False,
+        "attempts": [],
+    }
+
+    options = _candidate_options_for(model_id, destination)
+    if options and options[0].get("rejected"):
+        report.update(
+            {
+                "selected_model_id": options[0]["model_id"],
+                "destination": str(Path(options[0]["destination"]).resolve()),
+                "status": "rejected",
+                "failure_class": "unsupported_capability",
+                "failure_reason": "requested model id is not in the small instruction candidate allowlist",
+                "manual_action_required": False,
+            }
+        )
+        return report
+
+    runtime = transformers_runtime_status()
+    report["transformers_available"] = bool(runtime.get("available"))
+    report["transformers_version"] = runtime.get("version")
+    if not runtime.get("available"):
+        report.update(
+            {
+                "status": "failed",
+                "failure_class": runtime.get("failure_class"),
+                "failure_reason": runtime.get("reason"),
+                "manual_action_required": True,
+            }
+        )
+        return report
+
+    try:
+        transformers = _import_transformers_module()
+    except BackendLoadError as exc:
+        report.update(
+            {
+                "status": "failed",
+                "failure_class": exc.failure_class,
+                "failure_reason": exc.message,
+                "manual_action_required": True,
+            }
+        )
+        return report
+
+    workspace_root = Path(os.getcwd()).resolve()
+    for option in options:
+        destination_path = Path(str(option["destination"])).expanduser().resolve()
+        attempt: Dict[str, Any] = {
+            "model_id": option["model_id"],
+            "destination": str(destination_path),
+            "selection_reason": option.get("selection_reason"),
+            "status": "not_started",
+        }
+        report["attempts"].append(attempt)
+        try:
+            validate_local_path(
+                destination_path,
+                allowed_roots=(workspace_root,),
+                must_exist=False,
+            )
+        except ValidationError as exc:
+            attempt.update(
+                {
+                    "status": "rejected",
+                    "failure_class": "schema_validation_failed",
+                    "failure_reason": str(exc),
+                }
+            )
+            continue
+
+        if _looks_like_transformers_model_dir(destination_path):
+            config_written = _write_backend_config(config_path, destination_path)
+            summary = _directory_summary(destination_path)
+            attempt.update({"status": "already_present", "artifact_summary": summary})
+            report.update(
+                {
+                    "selected_model_id": option["model_id"],
+                    "destination": str(destination_path),
+                    "config_path": config_written,
+                    "downloaded_autonomously": False,
+                    "status": "already_present",
+                    "ok": True,
+                    "artifact_summary": summary,
+                    "manual_action_required": False,
+                }
+            )
+            return report
+
+        try:
+            _download_and_save_transformers_model(
+                transformers=transformers,
+                model_id=option["model_id"],
+                destination_path=destination_path,
+                source_schema="backend_small_candidate_model_source_v1",
+                source_payload={
+                    "smoke_only": True,
+                    "instruction_following_candidate": True,
+                    "proves_model_quality": False,
+                    "bakeoff_winner_claim": "none",
+                    "quality_claim": "none",
+                    "selection_reason": option.get("selection_reason"),
+                    "max_download_target_mb": option.get("max_download_target_mb"),
+                },
+            )
+            config_written = _write_backend_config(config_path, destination_path)
+            summary = _directory_summary(destination_path)
+            attempt.update({"status": "downloaded", "artifact_summary": summary})
+            report.update(
+                {
+                    "selected_model_id": option["model_id"],
+                    "destination": str(destination_path),
+                    "config_path": config_written,
+                    "downloaded_autonomously": True,
+                    "status": "provisioned",
+                    "ok": True,
+                    "artifact_summary": summary,
+                    "manual_action_required": False,
+                }
+            )
+            return report
+        except Exception as exc:
+            attempt.update(
+                {
+                    "status": "failed",
+                    "failure_class": "model_download_or_load_failed",
+                    "failure_reason": str(exc),
+                }
+            )
+
+    report.update(
+        {
+            "status": "failed",
+            "failure_class": "all_small_candidate_options_failed",
+            "failure_reason": "no allowlisted small instruction candidate could be provisioned autonomously",
+            "manual_action_required": True,
+            "manual_action": "Place a small ungated Transformers-compatible instruction model under run_artifacts/local_models/ and rerun provisioning.",
+        }
+    )
+    return report
+
+
 def provision_tiny_transformers_model(
     *,
     model_id: str = DEFAULT_TINY_SMOKE_MODEL_ID,
@@ -1046,19 +1306,17 @@ def provision_tiny_transformers_model(
 
     try:
         transformers = _import_transformers_module()
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            model_id,
-            local_files_only=False,
-            trust_remote_code=False,
+        _download_and_save_transformers_model(
+            transformers=transformers,
+            model_id=model_id,
+            destination_path=destination_path,
+            source_schema="backend_smoke_model_source_v1",
+            source_payload={
+                "smoke_only": True,
+                "proves_real_coding_ability": False,
+                "quality_claim": "none",
+            },
         )
-        model = transformers.AutoModelForCausalLM.from_pretrained(
-            model_id,
-            local_files_only=False,
-            trust_remote_code=False,
-        )
-        destination_path.mkdir(parents=True, exist_ok=True)
-        tokenizer.save_pretrained(str(destination_path))
-        model.save_pretrained(str(destination_path), safe_serialization=True)
         with open(destination_path / "backend_smoke_model_source.json", "w", encoding="utf-8") as handle:
             json.dump(
                 {
