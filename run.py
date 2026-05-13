@@ -552,8 +552,13 @@ def run_agent_backend_smoke(args):
     print(f"  tokenizer_load    : {payload.get('tokenizer_load_status')}")
     print(f"  model_load        : {payload.get('model_load_status')}")
     print(f"  generation_status : {payload.get('generation_status')}")
+    print(f"  contract_version  : {payload.get('structured_contract_version')}")
+    print(f"  attempts          : {payload.get('generation_attempts')}")
+    print(f"  malformed_retries : {payload.get('malformed_retry_count')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
+    print(f"  schema_status     : {payload.get('final_schema_validation_status')}")
     print(f"  candidate_valid   : {str(payload.get('structured_candidate_valid')).lower()}")
+    print(f"  unsafe_path       : {str(payload.get('unsafe_path_detected')).lower()}")
     print(f"  candidate_status  : {payload.get('tiny_candidate_generation_status')}")
     if payload.get("failure_class"):
         print(f"  failure_class     : {payload.get('failure_class')}")

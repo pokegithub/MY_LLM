@@ -33,16 +33,26 @@ ALLOWED_TINY_SMOKE_MODEL_IDS = {
     "hf-internal-testing/tiny-random-gpt2",
     "sshleifer/tiny-gpt2",
 }
+STRUCTURED_CANDIDATE_CONTRACT_VERSION = "structured_candidate_contract_v1"
+MAX_FORMAT_RETRY_ATTEMPTS = 2
 
 
 class BackendError(RuntimeError):
     """Base error for truthful backend failure surfaces."""
 
-    def __init__(self, failure_class: str, message: str, *, failure_stage: Optional[str] = None):
+    def __init__(
+        self,
+        failure_class: str,
+        message: str,
+        *,
+        failure_stage: Optional[str] = None,
+        details: Optional[Mapping[str, Any]] = None,
+    ):
         super().__init__(f"{failure_class}: {message}")
         self.failure_class = failure_class
         self.message = message
         self.failure_stage = failure_stage
+        self.details = dict(details or {})
 
 
 class BackendLoadError(BackendError):
@@ -197,6 +207,62 @@ def _validation_failure(message: str) -> BackendCandidateError:
     return BackendCandidateError("schema_validation_failed", message)
 
 
+def structured_candidate_schema() -> Dict[str, Any]:
+    """Return the canonical JSON contract for backend-generated candidates."""
+    return {
+        "contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+        "type": "object",
+        "required": ["candidate_id", "summary", "edits"],
+        "additional_properties": "ignored_except_supported_failure_classes",
+        "properties": {
+            "candidate_id": {
+                "type": "string",
+                "required": True,
+                "description": "Non-empty short stable id for this candidate.",
+            },
+            "summary": {
+                "type": "string",
+                "required": True,
+                "description": "Non-empty one sentence edit summary. This is not a correctness claim.",
+            },
+            "edits": {
+                "type": "array",
+                "required": True,
+                "min_items": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["path", "new_content"],
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative path only. Absolute paths and parent traversal are rejected.",
+                        },
+                        "new_content": {
+                            "type": "string",
+                            "description": "Full replacement file content. Empty strings are rejected in v1.",
+                        },
+                    },
+                },
+            },
+            "supported_failure_classes": {
+                "type": "array",
+                "required": False,
+                "description": "Optional repair-scoping labels only.",
+            },
+        },
+        "rejected_cases": [
+            "plain prose",
+            "markdown fenced JSON",
+            "partial JSON",
+            "missing required fields",
+            "absolute paths",
+            "parent directory traversal",
+            "empty edit list",
+            "empty new_content",
+        ],
+    }
+
+
 def _validate_candidate_edit_path(raw_path: str, workspace_root: str) -> str:
     path_text = str(raw_path).strip()
     if not path_text:
@@ -249,6 +315,8 @@ def candidate_from_payload(
             raise _validation_failure("each edit requires path and new_content")
         if not isinstance(item["new_content"], str):
             raise _validation_failure("edit new_content must be a string")
+        if not item["new_content"].strip():
+            raise _validation_failure("edit new_content must be non-empty")
         edit_path = _validate_candidate_edit_path(str(item["path"]), workspace_root)
         edits.append(FileEdit(path=edit_path, new_content=item["new_content"]))
 
@@ -292,6 +360,36 @@ def candidate_from_model_text(
         workspace_root=workspace_root,
         metadata=metadata,
     )
+
+
+def _format_retry_prompt(
+    *,
+    base_prompt: str,
+    previous_output: str,
+    parse_error: BackendCandidateError,
+    retry_index: int,
+) -> str:
+    payload = {
+        "purpose": "format_repair_only",
+        "retry_index": retry_index,
+        "parse_or_schema_error": {
+            "failure_class": parse_error.failure_class,
+            "message": parse_error.message,
+        },
+        "required_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+        "candidate_json_schema": structured_candidate_schema(),
+        "original_candidate_request": base_prompt,
+        "previous_invalid_output_excerpt": str(previous_output)[:1200],
+        "constraints": [
+            "Return exactly one JSON object and nothing else.",
+            "Do not wrap the JSON in markdown.",
+            "Do not explain the fix.",
+            "Do not invent a new task or new target file.",
+            "Use only the same task context and allowed file paths from the original request.",
+            "Verifier decides correctness; do not claim success.",
+        ],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
 
 
 def _import_transformers_module():
@@ -421,23 +519,17 @@ def _candidate_contract_prompt(
         "plan": _plan_summary(plan),
         "context": _compact_context(context),
         "extra": dict(extra or {}),
-        "candidate_json_schema": {
-            "candidate_id": "short stable id",
-            "summary": "one sentence describing the intended edit",
-            "edits": [
-                {
-                    "path": "workspace-relative path",
-                    "new_content": "full replacement file content",
-                }
-            ],
-            "supported_failure_classes": ["optional", "repair", "classes"],
-        },
+        "required_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+        "candidate_json_schema": structured_candidate_schema(),
+        "allowed_target_files": list(plan.target_files or request.file_hints),
         "constraints": [
-            "Return strict JSON only. Do not wrap it in markdown.",
+            "Return strict JSON only. No markdown fences, no prose, no comments.",
             "Use only workspace-relative file paths.",
+            "Use only allowed_target_files unless the plan explicitly requires another workspace file.",
             "Make the smallest relevant full-file replacement edit.",
             "Do not edit unrelated files.",
             "Do not claim correctness; the verifier decides success.",
+            "Do not include hidden reasoning.",
         ],
     }
     return json.dumps(payload, indent=2, sort_keys=True)
@@ -566,16 +658,61 @@ class LocalTransformersInProcessBackend:
         source: str,
         prompt: str,
     ) -> Candidate:
-        raw_text = self._generate_text(prompt)
-        return candidate_from_model_text(
-            raw_text,
-            source=source,
-            workspace_root=self.workspace_root,
-            metadata={
-                "backend_kind": self.backend_kind,
-                "model_id_or_path": self.model_id_or_path,
-                "local_files_only": self.local_files_only,
-                "raw_output_chars": len(raw_text),
+        raw_attempts = []
+        current_prompt = prompt
+        last_error: Optional[BackendCandidateError] = None
+        for attempt_index in range(MAX_FORMAT_RETRY_ATTEMPTS + 1):
+            raw_text = self._generate_text(current_prompt)
+            raw_attempts.append(
+                {
+                    "attempt_index": attempt_index,
+                    "raw_output_chars": len(raw_text),
+                    "raw_output_sha256": hashlib.sha256(raw_text.encode("utf-8", errors="replace")).hexdigest(),
+                }
+            )
+            try:
+                candidate = candidate_from_model_text(
+                    raw_text,
+                    source=source,
+                    workspace_root=self.workspace_root,
+                    metadata={
+                        "backend_kind": self.backend_kind,
+                        "model_id_or_path": self.model_id_or_path,
+                        "local_files_only": self.local_files_only,
+                        "raw_output_chars": len(raw_text),
+                        "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+                        "generation_attempts": attempt_index + 1,
+                        "malformed_retry_count": attempt_index,
+                        "structured_output_parse_status": "passed",
+                        "structured_candidate_valid": True,
+                        "format_retry_attempts": tuple(raw_attempts),
+                    },
+                )
+                return candidate
+            except BackendCandidateError as exc:
+                last_error = exc
+                raw_attempts[-1]["failure_class"] = exc.failure_class
+                raw_attempts[-1]["failure_reason"] = exc.message
+                if attempt_index >= MAX_FORMAT_RETRY_ATTEMPTS:
+                    break
+                current_prompt = _format_retry_prompt(
+                    base_prompt=prompt,
+                    previous_output=raw_text,
+                    parse_error=exc,
+                    retry_index=attempt_index + 1,
+                )
+
+        assert last_error is not None
+        raise BackendCandidateError(
+            last_error.failure_class,
+            last_error.message,
+            details={
+                "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+                "generation_attempts": len(raw_attempts),
+                "malformed_retry_count": max(0, len(raw_attempts) - 1),
+                "structured_output_parse_status": "failed",
+                "structured_candidate_valid": False,
+                "format_retry_attempts": tuple(raw_attempts),
             },
         )
 
@@ -716,6 +853,13 @@ def _smoke_load_status(report: Dict[str, Any], status: Mapping[str, Any]) -> Non
         report["model_load_status"] = "failed"
 
 
+def _unsafe_path_detected(failure_class: Optional[str], message: Optional[str]) -> bool:
+    if failure_class != "schema_validation_failed":
+        return False
+    text = str(message or "").lower()
+    return any(token in text for token in ("path", "absolute", "parent traversal", "workspace-relative"))
+
+
 def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
     """Run a narrow backend capability smoke check without applying edits."""
     runtime = transformers_runtime_status()
@@ -736,8 +880,16 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
         "generated_text_chars": 0,
         "generated_text_sample": None,
         "generated_text_sha256": None,
+        "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+        "generation_attempts": 0,
+        "malformed_retry_count": 0,
+        "final_parse_status": "not_attempted",
+        "final_schema_validation_status": "not_attempted",
         "structured_output_parse_status": "not_attempted",
         "structured_candidate_valid": False,
+        "candidate_valid": False,
+        "rejected_reason": None,
+        "unsafe_path_detected": False,
         "tiny_candidate_generation_status": "not_attempted",
         "failure_class": status.get("failure_class"),
         "failure_reason": status.get("reason"),
@@ -758,32 +910,39 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
                 context=context,
                 plan=plan,
             )
-            raw_text = backend._generate_text(prompt)
-            report["generation_status"] = "passed"
-            report["generated_text_chars"] = len(raw_text)
-            report["generated_text_sample"] = raw_text[:240]
-            report["generated_text_sha256"] = hashlib.sha256(raw_text.encode("utf-8", errors="replace")).hexdigest()
-            candidate = candidate_from_model_text(
-                raw_text,
+            candidate = backend._generate_candidate(
                 source="local_transformers_initial",
-                workspace_root=workspace_root,
-                metadata={
-                    "backend_kind": BACKEND_KIND_LOCAL_TRANSFORMERS,
-                    "model_id_or_path": backend.model_id_or_path,
-                    "local_files_only": backend.local_files_only,
-                    "raw_output_chars": len(raw_text),
-                },
+                prompt=prompt,
             )
+            report["generation_status"] = "passed"
         else:
             candidate = backend.generate_initial_candidate(request, context, plan)
             report["generation_status"] = "passed"
     except BackendCandidateError as exc:
+        details = dict(exc.details or {})
+        report["generation_attempts"] = int(details.get("generation_attempts") or (1 if exc.failure_class != "runtime_execution_failed" else 0))
+        report["malformed_retry_count"] = int(details.get("malformed_retry_count") or 0)
+        attempts = details.get("format_retry_attempts") or ()
+        if attempts:
+            last_attempt = attempts[-1]
+            if isinstance(last_attempt, Mapping):
+                report["generated_text_chars"] = int(last_attempt.get("raw_output_chars") or 0)
+                report["generated_text_sha256"] = last_attempt.get("raw_output_sha256")
+        if report["generation_attempts"] > 0 and exc.failure_class != "runtime_execution_failed":
+            report["generation_status"] = "passed"
         report["structured_output_parse_status"] = "failed"
+        report["final_parse_status"] = "failed"
+        report["final_schema_validation_status"] = "failed" if exc.failure_class == "schema_validation_failed" else "not_attempted"
         report["tiny_candidate_generation_status"] = "failed"
         report["failure_class"] = exc.failure_class
         report["failure_reason"] = exc.message
+        report["rejected_reason"] = exc.message
+        report["unsafe_path_detected"] = _unsafe_path_detected(exc.failure_class, exc.message)
         if report["generation_status"] == "passed":
-            report["smoke_level"] = "model_loaded_generation_succeeded_parse_failed"
+            if report["malformed_retry_count"] > 0:
+                report["smoke_level"] = "model_loaded_generation_succeeded_parse_retried_failed"
+            else:
+                report["smoke_level"] = "model_loaded_generation_succeeded_parse_failed"
         else:
             report["generation_status"] = "failed"
             report["smoke_level"] = "model_loaded_generation_failed"
@@ -793,12 +952,18 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
         report["tiny_candidate_generation_status"] = "failed"
         report["failure_class"] = "runtime_execution_failed"
         report["failure_reason"] = str(exc)
+        report["rejected_reason"] = str(exc)
         report["generation_status"] = "failed"
         report["smoke_level"] = "model_loaded_generation_failed"
         return report
 
     report["structured_output_parse_status"] = "passed"
+    report["final_parse_status"] = "passed"
+    report["final_schema_validation_status"] = "passed"
     report["structured_candidate_valid"] = True
+    report["candidate_valid"] = True
+    report["generation_attempts"] = int(candidate.metadata.get("generation_attempts") or 1)
+    report["malformed_retry_count"] = int(candidate.metadata.get("malformed_retry_count") or 0)
     report["tiny_candidate_generation_status"] = "candidate_generated"
     report["smoke_level"] = "model_loaded_generation_succeeded_parse_passed"
     report["candidate_summary"] = {

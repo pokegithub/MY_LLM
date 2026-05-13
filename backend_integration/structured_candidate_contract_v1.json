@@ -1,0 +1,70 @@
+{
+  "schema": "structured_candidate_contract_v1",
+  "accepted_output": {
+    "type": "object",
+    "required": [
+      "candidate_id",
+      "summary",
+      "edits"
+    ],
+    "properties": {
+      "candidate_id": {
+        "type": "string",
+        "non_empty": true
+      },
+      "summary": {
+        "type": "string",
+        "non_empty": true,
+        "success_claim_allowed": false
+      },
+      "edits": {
+        "type": "array",
+        "min_items": 1,
+        "items": {
+          "required": [
+            "path",
+            "new_content"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "workspace_relative_only": true,
+              "parent_traversal_allowed": false
+            },
+            "new_content": {
+              "type": "string",
+              "non_empty": true,
+              "meaning": "full_file_replacement"
+            }
+          }
+        }
+      },
+      "supported_failure_classes": {
+        "type": "array",
+        "required": false
+      }
+    }
+  },
+  "rejected_cases": [
+    "plain_prose",
+    "markdown_wrapped_json",
+    "partial_json",
+    "missing_required_fields",
+    "empty_required_fields",
+    "absolute_paths",
+    "parent_traversal",
+    "unsafe_workspace_path"
+  ],
+  "malformed_output_retry_policy": {
+    "enabled_for": [
+      "local_transformers_in_process"
+    ],
+    "max_format_retries": 2,
+    "logged": true,
+    "success_requires_schema_validation": true,
+    "quality_claim": "none"
+  },
+  "verifier_authority": "required_for_correctness",
+  "proves_real_coding_ability": false,
+  "quality_claim": "none"
+}

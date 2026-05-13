@@ -186,6 +186,17 @@ def _backend_status_with_failure(backend_status: Dict, exc: BackendCandidateErro
     updated = dict(backend_status)
     updated["last_failure_class"] = exc.failure_class
     updated["last_failure_reason"] = exc.message
+    if exc.details:
+        updated["last_failure_details"] = dict(exc.details)
+        for key in (
+            "structured_contract_version",
+            "generation_attempts",
+            "malformed_retry_count",
+            "structured_output_parse_status",
+            "structured_candidate_valid",
+        ):
+            if key in exc.details:
+                updated[key] = exc.details[key]
     return updated
 
 

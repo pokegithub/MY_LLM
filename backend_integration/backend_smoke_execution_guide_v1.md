@@ -11,7 +11,8 @@ It checks:
 - explicit backend configuration
 - local-only model loading
 - candidate-generation call execution
-- strict JSON candidate parsing
+- strict JSON candidate parsing against `structured_candidate_contract_v1`
+- bounded malformed-output retry reporting
 - truthful failure classification
 
 It does not check:
@@ -76,12 +77,15 @@ This download is for backend smoke only. It is not bakeoff evidence, not a usefu
 - `schema_validation_failed`: JSON parsed but did not match the `Candidate` / `FileEdit` contract.
 - `candidate_generated`: one candidate parsed successfully; this is still not proof of coding ability.
 
+The local Transformers backend may make at most two explicit format-repair retries. These retries are logged as `generation_attempts` and `malformed_retry_count`. They do not silently repair output, and they do not count as success unless the final output validates through the same candidate parser.
+
 Smoke levels:
 
 - `runtime_unavailable`: backend runtime dependency is missing or cannot be imported.
 - `model_missing`: configured local-only model path is absent or incomplete.
 - `model_loaded_generation_failed`: model loaded but generation failed.
 - `model_loaded_generation_succeeded_parse_failed`: model loaded and generated text, but strict candidate parsing failed.
+- `model_loaded_generation_succeeded_parse_retried_failed`: model loaded and generated text, but strict candidate parsing still failed after bounded format retries.
 - `model_loaded_generation_succeeded_parse_passed`: model loaded, generated text, and produced a parseable candidate.
 
 Every outcome must keep `proves_real_coding_ability: false` and `quality_claim: none` unless a separate verified solve report proves a specific toy task passed its verifier.

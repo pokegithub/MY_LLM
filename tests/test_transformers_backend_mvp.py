@@ -7,7 +7,14 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from agent.backend import BackendLoadError, backend_smoke_report, candidate_from_model_text, load_backend
+from agent.backend import (
+    BackendLoadError,
+    STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+    backend_smoke_report,
+    candidate_from_model_text,
+    load_backend,
+    structured_candidate_schema,
+)
 from agent.orchestrator import solve_task
 from agent.trajectory import build_trajectory_record
 from agent.trajectory_quality import SFT_POSITIVE, classify_trajectory
@@ -29,6 +36,13 @@ def agent_config_overrides(**overrides):
 
 
 def fake_transformers_module(output_text: str):
+    return fake_transformers_sequence([output_text])
+
+
+def fake_transformers_sequence(output_texts):
+    outputs = list(output_texts)
+    state = {"index": 0}
+
     class FakeTokenizer:
         model_max_length = 128
 
@@ -36,7 +50,10 @@ def fake_transformers_module(output_text: str):
             return {"input_ids": [[1, 2, 3]]}
 
         def decode(self, generated, skip_special_tokens=True):
-            return output_text
+            index = min(state["index"], len(outputs) - 1)
+            value = outputs[index]
+            state["index"] += 1
+            return value
 
     class FakeModel:
         def eval(self):
@@ -56,6 +73,7 @@ def fake_transformers_module(output_text: str):
             return FakeModel()
 
     return types.SimpleNamespace(
+        __version__="fake",
         AutoTokenizer=AutoTokenizer,
         AutoModelForCausalLM=AutoModelForCausalLM,
     )
@@ -90,6 +108,29 @@ def valid_candidate_json(path="demo.py", content="def add(a, b):\n    return a +
 
 
 class TransformersBackendMvpTests(unittest.TestCase):
+    def test_structured_candidate_contract_schema_is_canonical(self):
+        schema = structured_candidate_schema()
+
+        self.assertEqual(schema["contract_version"], STRUCTURED_CANDIDATE_CONTRACT_VERSION)
+        self.assertEqual(schema["required"], ["candidate_id", "summary", "edits"])
+        rejected = set(schema["rejected_cases"])
+        self.assertIn("plain prose", rejected)
+        self.assertIn("markdown fenced JSON", rejected)
+        self.assertIn("empty new_content", rejected)
+
+    def test_structured_candidate_contract_artifacts_exist(self):
+        markdown_path = os.path.join("backend_integration", "structured_candidate_contract_v1.md")
+        json_path = os.path.join("backend_integration", "structured_candidate_contract_v1.json")
+
+        self.assertTrue(os.path.exists(markdown_path))
+        with open(json_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        self.assertEqual(payload["schema"], "structured_candidate_contract_v1")
+        self.assertEqual(payload["malformed_output_retry_policy"]["max_format_retries"], 2)
+        self.assertFalse(payload["proves_real_coding_ability"])
+        self.assertEqual(payload["quality_claim"], "none")
+
     def test_backend_dependency_surface_is_optional_and_machine_readable(self):
         report = collect_backend_dependency_checks()
 
@@ -196,6 +237,11 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(payload["backend_status"]["kind"], "local_transformers_in_process")
         self.assertEqual(payload["final_origin"], "initial")
         self.assertEqual(payload["candidate"]["source"], "local_transformers_initial")
+        self.assertEqual(
+            payload["candidate"]["metadata"]["structured_contract_version"],
+            STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+        )
+        self.assertEqual(payload["candidate"]["metadata"]["generation_attempts"], 1)
         self.assertEqual(payload["quality_claim"], "verification_passed")
         trajectory = build_trajectory_record(payload)
         quality = classify_trajectory(trajectory)
@@ -222,6 +268,8 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
         self.assertIn("malformed_candidate_output", payload["blocked_reason"])
         self.assertEqual(payload["backend_status"]["last_failure_class"], "malformed_candidate_output")
+        self.assertEqual(payload["backend_status"]["generation_attempts"], 3)
+        self.assertEqual(payload["backend_status"]["malformed_retry_count"], 2)
         self.assertEqual(payload["attempts"], [])
 
     def test_unsafe_backend_edit_path_is_rejected_before_candidate_use(self):
@@ -245,7 +293,31 @@ class TransformersBackendMvpTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
         self.assertIn("schema_validation_failed", payload["blocked_reason"])
+        self.assertTrue(payload["backend_status"]["last_failure_details"])
         self.assertFalse(os.path.exists(os.path.join(td, "..", "escape.py")))
+
+    def test_empty_backend_edit_content_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            empty_edit_output = valid_candidate_json(path="demo.py", content="")
+            fake_module = fake_transformers_module(empty_edit_output)
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                    report_dir=os.path.join(td, "agent_reports"),
+                ):
+                    payload = solve_task(
+                        TaskRequest(
+                            task_text="Fix demo.py",
+                            file_hints=("demo.py",),
+                            checks=("compileall:demo.py",),
+                            workspace_root=td,
+                        )
+                    )
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_BLOCKED)
+        self.assertEqual(payload["backend_status"]["last_failure_class"], "schema_validation_failed")
+        self.assertIn("new_content must be non-empty", payload["backend_status"]["last_failure_reason"])
 
     def test_backend_unavailable_surfaces_without_silent_fallback(self):
         with tempfile.TemporaryDirectory() as td:
@@ -283,8 +355,13 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["tokenizer_load_status"], "passed")
         self.assertEqual(report["model_load_status"], "passed")
         self.assertEqual(report["generation_status"], "passed")
+        self.assertEqual(report["structured_contract_version"], STRUCTURED_CANDIDATE_CONTRACT_VERSION)
+        self.assertEqual(report["generation_attempts"], 1)
+        self.assertEqual(report["malformed_retry_count"], 0)
         self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertEqual(report["final_schema_validation_status"], "passed")
         self.assertTrue(report["structured_candidate_valid"])
+        self.assertTrue(report["candidate_valid"])
         self.assertEqual(report["tiny_candidate_generation_status"], "candidate_generated")
         self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_passed")
         self.assertFalse(report["proves_real_coding_ability"])
@@ -308,7 +385,7 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["smoke_level"], "model_missing")
         self.assertEqual(report["failure_class"], "model_load_failed")
 
-    def test_backend_smoke_reports_generation_succeeded_parse_failed(self):
+    def test_backend_smoke_reports_generation_succeeded_parse_retried_failed(self):
         with tempfile.TemporaryDirectory() as td:
             fake_module = fake_transformers_module("not json")
             with patch.dict(sys.modules, {"transformers": fake_module}):
@@ -323,7 +400,9 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["structured_output_parse_status"], "failed")
         self.assertFalse(report["structured_candidate_valid"])
         self.assertEqual(report["failure_class"], "malformed_candidate_output")
-        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_failed")
+        self.assertEqual(report["generation_attempts"], 3)
+        self.assertEqual(report["malformed_retry_count"], 2)
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_retried_failed")
         self.assertGreater(report["generated_text_chars"], 0)
 
     def test_candidate_parser_rejects_plain_prose(self):
@@ -331,6 +410,35 @@ class TransformersBackendMvpTests(unittest.TestCase):
             with self.assertRaises(Exception) as caught:
                 candidate_from_model_text("plain prose", source="test", workspace_root=td)
         self.assertIn("malformed_candidate_output", str(caught.exception))
+
+    def test_candidate_parser_rejects_markdown_wrapped_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            wrapped = "```json\n" + valid_candidate_json() + "\n```"
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text(wrapped, source="test", workspace_root=td)
+        self.assertIn("malformed_candidate_output", str(caught.exception))
+
+    def test_bounded_retry_can_accept_valid_json_after_format_repair(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_sequence(
+                [
+                    "not json",
+                    "```json\nstill not strict\n```",
+                    valid_candidate_json(path="backend_smoke_target.py", content="def value():\n    return 3\n"),
+                ]
+            )
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertTrue(report["structured_candidate_valid"])
+        self.assertEqual(report["generation_attempts"], 3)
+        self.assertEqual(report["malformed_retry_count"], 2)
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_passed")
 
 
 if __name__ == "__main__":

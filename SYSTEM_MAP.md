@@ -166,14 +166,15 @@
   - `agent-backend-smoke`
   - `agent-backend-provision-tiny-model`
 - `agent/backend.py` now supports `agent.backend_kind: local_transformers_in_process` with an explicit `agent.backend_model_id_or_path`. It uses local model files by default and does not auto-download a model.
-- Generated backend output must be strict JSON that validates into the existing `Candidate` and `FileEdit` contract before the agent can apply it.
-- Malformed JSON, schema violations, unsafe edit paths, missing backend configuration, unavailable Transformers dependencies, and model-load failures surface as explicit backend failure classes.
+- Generated backend output must be strict JSON that validates into `structured_candidate_contract_v1` and the existing `Candidate` and `FileEdit` types before the agent can apply it.
+- Malformed JSON, schema violations, unsafe edit paths, empty edits, missing backend configuration, unavailable Transformers dependencies, and model-load failures surface as explicit backend failure classes.
+- The local Transformers path may make at most two logged format-repair retries after malformed or schema-invalid output. Retry success only means schema compliance; verifier authority over correctness is unchanged.
 - Exact symbolic tasks still bypass backend loading entirely, and verifier authority over solve success is unchanged.
 - `requirements-backend.txt` declares optional backend-specific runtime dependencies. Missing backend dependencies must not block normal no-backend or exact-task behavior.
 - The smoke command now separates runtime availability, tokenizer/model loading, generation, strict candidate parsing, and candidate validity. It does not run a bakeoff, hidden eval, training, retrieval, or claim model quality.
 - `agent-backend-provision-tiny-model` explicitly downloads only allowlisted tiny smoke models by default and writes them under `run_artifacts/local_models/tiny-transformers-smoke`.
 - `configs/backend_smoke_local_example.json` provides a non-default local-only smoke config. `backend_integration/backend_smoke_execution_guide_v1.md` documents truthful smoke outcomes, including backend dependency or local-model absence.
-- A tiny model loading and generation smoke can pass while structured candidate parsing still fails; that is useful runtime evidence, not coding-quality evidence.
+- A tiny model loading and generation smoke can pass while structured candidate parsing still fails; that is useful runtime evidence, not coding-quality evidence. Structured parse success is also not code correctness, model quality, or bakeoff evidence.
 
 ---
 
