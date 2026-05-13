@@ -7,6 +7,7 @@ Usage:
   python run.py agent-verify   Run the verified coding-agent verify path
   python run.py agent-backend-smoke Check configured coding backend load and candidate schema
   python run.py agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
+  python run.py candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -161,6 +162,7 @@ def check_dependencies(command: str):
         "agent-verify": {},
         "agent-backend-smoke": {},
         "agent-backend-provision-tiny-model": {},
+        "candidate-readiness-smoke": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -599,6 +601,44 @@ def run_agent_backend_provision_tiny_model(args):
         print(f"  size_bytes   : {summary.get('size_bytes')}")
     print(f"  proves_coding: {str(payload.get('proves_real_coding_ability')).lower()}")
     print(f"  quality_claim: {payload.get('quality_claim')}")
+    print("=" * 60)
+
+
+def run_candidate_readiness_smoke(args):
+    from model_selection.readiness import candidate_readiness_smoke
+
+    payload = candidate_readiness_smoke(
+        candidate_id=args.candidate_id,
+        shortlist_path=args.shortlist_path,
+        workspace_root=".",
+    )
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("CANDIDATE READINESS SMOKE")
+    print("=" * 60)
+    print(f"  candidate_id      : {payload.get('candidate_id')}")
+    print(f"  role              : {payload.get('candidate_role')}")
+    print(f"  model_path        : {payload.get('model_path') or 'none'}")
+    print(f"  path_exists       : {str(payload.get('model_path_exists')).lower()}")
+    print(f"  model_load        : {payload.get('model_load_status')}")
+    print(f"  generation        : {payload.get('generation_status')}")
+    print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
+    print(f"  schema_status     : {payload.get('schema_validation_status')}")
+    print(f"  candidate_valid   : {str(payload.get('candidate_valid')).lower()}")
+    print(f"  verifier_status   : {payload.get('verifier_status')}")
+    print(f"  smoke_level       : {payload.get('smoke_level')}")
+    if payload.get("failure_class"):
+        print(f"  failure_class     : {payload.get('failure_class')}")
+    if payload.get("failure_reason"):
+        print(f"  failure_reason    : {payload.get('failure_reason')}")
+    print(f"  proves_quality    : {str(payload.get('proves_model_quality')).lower()}")
+    print(f"  winner_claim      : {payload.get('bakeoff_winner_claim')}")
+    print(f"  quality_claim     : {payload.get('quality_claim')}")
     print("=" * 60)
 
 
@@ -1736,6 +1776,7 @@ Commands:
   agent-verify Run the verified coding-agent verify path
   agent-backend-smoke Check configured coding backend load and candidate schema
   agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
+  candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1779,6 +1820,7 @@ Commands:
             "agent-plan", "agent-solve", "agent-verify",
             "agent-backend-smoke",
             "agent-backend-provision-tiny-model",
+            "candidate-readiness-smoke",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -1863,6 +1905,16 @@ Commands:
         help="Override the tiny-model allowlist for provisioning. Use only for explicit local smoke experiments.",
     )
     parser.add_argument(
+        "--candidate-id",
+        default="open_dense_7b_candidate_slot",
+        help="Candidate id for candidate-readiness-smoke.",
+    )
+    parser.add_argument(
+        "--shortlist-path",
+        default="./model_selection/candidate_shortlist_v1.json",
+        help="Candidate shortlist JSON path for candidate-readiness-smoke.",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Run identifier for trajectory-show.",
@@ -1928,6 +1980,7 @@ Commands:
         "agent-verify": lambda: run_agent_verify(args),
         "agent-backend-smoke": lambda: run_agent_backend_smoke(args),
         "agent-backend-provision-tiny-model": lambda: run_agent_backend_provision_tiny_model(args),
+        "candidate-readiness-smoke": lambda: run_candidate_readiness_smoke(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),

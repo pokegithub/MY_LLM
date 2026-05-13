@@ -1,0 +1,92 @@
+{
+  "schema": "candidate_readiness_protocol_v1",
+  "version": "v1",
+  "purpose": "pre_bakeoff_readiness_only",
+  "selection_state": "no_winner_selected",
+  "bakeoff_executed": false,
+  "quality_claim": "none",
+  "bakeoff_winner_claim": "none",
+  "required_gates": [
+    {
+      "gate_id": "model_availability_gate",
+      "what_is_checked": "candidate has an explicit local checkpoint path and the path exists",
+      "pass_condition": "local_model_path exists on disk",
+      "fail_condition": "path missing, empty, or not configured",
+      "blocked_unverified_condition": "candidate is a slot awaiting user-provided model artifacts",
+      "evidence_required": "resolved path and exists flag",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "license_deployment_review_gate",
+      "what_is_checked": "license and deployment terms have been reviewed for intended use",
+      "pass_condition": "review status is explicitly allowed by repo policy for bakeoff execution",
+      "fail_condition": "review marks candidate excluded or restricted beyond bakeoff use",
+      "blocked_unverified_condition": "review is pending or unknown",
+      "evidence_required": "review note or source metadata reference",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "runtime_load_gate",
+      "what_is_checked": "local Transformers runtime can load tokenizer and model",
+      "pass_condition": "tokenizer_load_status=passed and model_load_status=passed",
+      "fail_condition": "load fails with model_load_failed or backend_unavailable",
+      "blocked_unverified_condition": "runtime missing or local path not available",
+      "evidence_required": "candidate-readiness-smoke report",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "tokenizer_model_generation_gate",
+      "what_is_checked": "loaded model can execute a bounded generation call",
+      "pass_condition": "generation_status=passed",
+      "fail_condition": "generation_status=failed",
+      "blocked_unverified_condition": "model did not load",
+      "evidence_required": "generation status and failure class if failed",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "structured_candidate_json_gate",
+      "what_is_checked": "generated output validates against structured_candidate_contract_v1",
+      "pass_condition": "structured_output_parse_status=passed and candidate_valid=true",
+      "fail_condition": "parse_failed or schema_validation_failed",
+      "blocked_unverified_condition": "generation did not run",
+      "evidence_required": "contract version, parse status, schema status, retry count",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "safe_path_schema_validation_gate",
+      "what_is_checked": "candidate edits use safe workspace-relative paths and non-empty edits",
+      "pass_condition": "unsafe_path_detected=false and schema validation passed",
+      "fail_condition": "unsafe path, empty edit, or schema violation",
+      "blocked_unverified_condition": "candidate did not parse",
+      "evidence_required": "schema validation status and unsafe path flag",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "tiny_verifier_gate",
+      "what_is_checked": "schema-valid candidate can enter a tiny controlled verifier path",
+      "pass_condition": "verifier_status=passed on a toy readiness task",
+      "fail_condition": "verifier_status=failed after a valid candidate is applied and checked",
+      "blocked_unverified_condition": "no valid candidate reached verification",
+      "evidence_required": "tiny solve summary and verifier result",
+      "blocks_full_bakeoff_entry": false
+    },
+    {
+      "gate_id": "trajectory_quality_non_inflation_gate",
+      "what_is_checked": "readiness smoke does not create inflated SFT-positive claims",
+      "pass_condition": "trajectory-quality audit reports no unsupported eligibility inflation",
+      "fail_condition": "backendless, fixture, or malformed traces become SFT-positive",
+      "blocked_unverified_condition": "audit not run",
+      "evidence_required": "trajectory-quality-audit output",
+      "blocks_full_bakeoff_entry": true
+    },
+    {
+      "gate_id": "hidden_eval_readiness_gate",
+      "what_is_checked": "candidate is ready to enter private hidden eval execution later",
+      "pass_condition": "all mandatory readiness gates pass and hidden eval artifacts are available",
+      "fail_condition": "mandatory gate fails",
+      "blocked_unverified_condition": "candidate lacks local model, license review, or runtime evidence",
+      "evidence_required": "readiness report and hidden eval artifact validation",
+      "blocks_full_bakeoff_entry": true
+    }
+  ]
+}

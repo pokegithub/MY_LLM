@@ -1,0 +1,70 @@
+{
+  "schema": "candidate_shortlist_v1",
+  "version": "v1",
+  "selection_state": "no_winner_selected",
+  "winner_selected": false,
+  "dense_only_required": true,
+  "moe_allowed": false,
+  "quality_claim": "none",
+  "bakeoff_winner_claim": "none",
+  "candidate_group_count": 3,
+  "candidate_groups": [
+    {
+      "candidate_id": "repo_custom_base_candidate",
+      "candidate_role": "current_custom_base_candidate",
+      "size_class": "repo_custom_unknown_until_checkpoint",
+      "dense_or_moe": "dense",
+      "open_weight_status": "repo_local_checkpoint_required",
+      "intended_runtime_path": "local_transformers_in_process_if_exported_to_transformers_compatible_checkpoint",
+      "expected_hardware_tier": "unknown_until_real_checkpoint",
+      "license_deployment_review_status": "repo_policy_review_required_before_main_path",
+      "local_model_path": null,
+      "local_availability_status": "requires_real_checkpoint",
+      "structured_output_readiness_status": "not_testable_without_real_checkpoint",
+      "bakeoff_eligibility_status": "blocked_requires_real_usable_checkpoint",
+      "current_status": "requires_real_checkpoint",
+      "custom_base_qualification_status": "requires_real_checkpoint",
+      "disqualifier_flags": [
+        "no_usable_checkpoint_evidenced_in_standard_checkpoint_surface"
+      ],
+      "notes": "The current custom base is not a full contender until a real usable checkpoint exists and passes the same readiness gates."
+    },
+    {
+      "candidate_id": "open_dense_7b_candidate_slot",
+      "candidate_role": "open_dense_7b_class_candidate",
+      "size_class": "7b_class",
+      "dense_or_moe": "dense",
+      "open_weight_status": "open_weight_required_pending_named_candidate",
+      "intended_runtime_path": "local_transformers_in_process",
+      "expected_hardware_tier": "linux_first_48gb_workstation",
+      "license_deployment_review_status": "pending_manual_review_before_download_or_bakeoff",
+      "local_model_path": "./run_artifacts/local_models/candidates/open-dense-7b",
+      "local_availability_status": "not_available_locally",
+      "structured_output_readiness_status": "not_run_model_not_available",
+      "bakeoff_eligibility_status": "blocked_until_local_model_and_readiness_smoke_pass",
+      "current_status": "proposed_not_selected",
+      "custom_base_qualification_status": "not_applicable",
+      "disqualifier_flags": [],
+      "notes": "This is a slot, not a selected model. Provide a reviewed dense open-weight 7B-class local checkpoint before smoke or bakeoff execution."
+    },
+    {
+      "candidate_id": "open_dense_14b_candidate_slot",
+      "candidate_role": "open_dense_14b_class_candidate",
+      "size_class": "14b_class",
+      "dense_or_moe": "dense",
+      "open_weight_status": "open_weight_required_pending_named_candidate",
+      "intended_runtime_path": "local_transformers_in_process",
+      "expected_hardware_tier": "linux_first_48gb_workstation_with_tighter_runtime_budget",
+      "license_deployment_review_status": "pending_manual_review_before_download_or_bakeoff",
+      "local_model_path": "./run_artifacts/local_models/candidates/open-dense-14b",
+      "local_availability_status": "not_available_locally",
+      "structured_output_readiness_status": "not_run_model_not_available",
+      "bakeoff_eligibility_status": "blocked_until_local_model_and_readiness_smoke_pass",
+      "current_status": "proposed_not_selected",
+      "custom_base_qualification_status": "not_applicable",
+      "disqualifier_flags": [],
+      "notes": "This is a slot, not a selected model. A 14B candidate must justify its higher cost with hidden-eval lift and workstation fit."
+    }
+  ],
+  "manual_model_placement_note": "Place reviewed local candidate checkpoints under the configured local_model_path values or update the shortlist with explicit local paths. Do not auto-download large models in this package."
+}

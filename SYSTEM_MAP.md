@@ -14,7 +14,7 @@
 ### Last synchronization
 
 - Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, and the Phase A backend runtime/tiny-model smoke execution package. This was not a brand-new full-model audit.
+- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, the Phase A backend runtime/tiny-model smoke execution package, and the Phase A candidate shortlist/readiness package. This was not a brand-new full-model audit.
 - Module count: 90 Python modules.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -175,6 +175,18 @@
 - `agent-backend-provision-tiny-model` explicitly downloads only allowlisted tiny smoke models by default and writes them under `run_artifacts/local_models/tiny-transformers-smoke`.
 - `configs/backend_smoke_local_example.json` provides a non-default local-only smoke config. `backend_integration/backend_smoke_execution_guide_v1.md` documents truthful smoke outcomes, including backend dependency or local-model absence.
 - A tiny model loading and generation smoke can pass while structured candidate parsing still fails; that is useful runtime evidence, not coding-quality evidence. Structured parse success is also not code correctness, model quality, or bakeoff evidence.
+
+### Phase A candidate readiness update
+
+- Date: 2026-05-13
+- Scope: Added a pre-bakeoff candidate shortlist and readiness gate. This is not bakeoff execution and selects no winner.
+- `model_selection/candidate_shortlist_v1.*` defines exactly three groups: current custom base, one dense open 7B-class slot, and one dense open 14B-class slot.
+- The current custom base remains `requires_real_checkpoint` and cannot be treated as a full contender without a usable checkpoint.
+- The 7B and 14B entries are `proposed_not_selected` slots with local placeholder paths under `run_artifacts/local_models/candidates/`; missing local paths are reported as unavailable, not quality failures.
+- `model_selection/candidate_readiness_protocol_v1.*` defines model availability, license/deployment review, runtime load, generation, structured JSON, safe-path/schema, tiny verifier, trajectory-quality non-inflation, and hidden-eval readiness gates.
+- `candidate-readiness-smoke` checks one shortlisted candidate slot and reports local availability, load/generation/schema status, verifier status if reached, `proves_model_quality: false`, `bakeoff_winner_claim: none`, and `quality_claim: none`.
+- `configs/backend_candidate_smoke_7b_example.json` and `configs/backend_candidate_smoke_14b_example.json` are local-only examples requiring user-provided reviewed checkpoint paths.
+- Full 7B/14B bakeoff remains unexecuted.
 
 ---
 
@@ -448,6 +460,7 @@ Primary architectural planes:
 - `agent-verify`: runs agent-side verification only and does not fabricate a candidate
 - `agent-backend-smoke`: reports configured backend load and strict candidate-schema parsing status without claiming coding ability or bakeoff success
 - `agent-backend-provision-tiny-model`: explicitly provisions an allowlisted tiny local Transformers smoke model; this is not model-quality or bakeoff evidence
+- `candidate-readiness-smoke`: checks one shortlisted candidate slot for local availability and pre-bakeoff structured-output readiness without selecting a winner
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning
