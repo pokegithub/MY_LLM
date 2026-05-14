@@ -1,0 +1,12 @@
+{
+  "agent": {
+    "backend_device": "auto",
+    "backend_kind": "local_transformers_in_process",
+    "backend_local_files_only": true,
+    "backend_max_new_tokens": 512,
+    "backend_model_id_or_path": "./run_artifacts/local_models/qwen2.5-coder-0.5b-instruct",
+    "backend_prompt_max_chars": 8000,
+    "backend_temperature": 0.0,
+    "backend_trust_remote_code": false
+  }
+}

@@ -54,6 +54,33 @@ def fake_transformers_download_module(*, fail=False, seen=None):
     )
 
 
+def fake_snapshot_download(seen=None, fail=False):
+    seen = seen if seen is not None else []
+
+    def _fake(*, model_id, destination_path, source_schema, source_payload):
+        seen.append((model_id, str(destination_path), source_schema, source_payload))
+        if fail:
+            raise OSError("network unavailable")
+        target = Path(destination_path)
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "tokenizer.json").write_text("{}", encoding="utf-8")
+        (target / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+        (target / "config.json").write_text("{}", encoding="utf-8")
+        (target / "model.safetensors").write_bytes(b"fake-model")
+        (target / "backend_model_source.json").write_text(
+            json.dumps(
+                {
+                    "schema": source_schema,
+                    "model_id": model_id,
+                    "quality_claim": source_payload.get("quality_claim"),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    return _fake
+
+
 class SmallCandidateProvisionTests(unittest.TestCase):
     def test_autonomous_provision_uses_first_priority_small_model(self):
         seen = []
@@ -62,10 +89,11 @@ class SmallCandidateProvisionTests(unittest.TestCase):
             config_path = os.path.join(td, "backend_config.json")
             fake_module = fake_transformers_download_module(seen=seen)
             with patch.dict(sys.modules, {"transformers": fake_module}):
-                report = provision_small_candidate_model(
-                    destination=destination,
-                    config_path=config_path,
-                )
+                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
+                    report = provision_small_candidate_model(
+                        destination=destination,
+                        config_path=config_path,
+                    )
 
             with open(config_path, "r", encoding="utf-8") as handle:
                 config = json.load(handle)
@@ -74,7 +102,7 @@ class SmallCandidateProvisionTests(unittest.TestCase):
         self.assertEqual(report["status"], "provisioned")
         self.assertTrue(report["downloaded_autonomously"])
         self.assertEqual(report["selected_model_id"], SMALL_CANDIDATE_MODEL_OPTIONS[0]["model_id"])
-        self.assertEqual(seen[0][1], SMALL_CANDIDATE_MODEL_OPTIONS[0]["model_id"])
+        self.assertEqual(seen[0][0], SMALL_CANDIDATE_MODEL_OPTIONS[0]["model_id"])
         self.assertTrue(config["agent"]["backend_local_files_only"])
         self.assertEqual(config["agent"]["backend_kind"], "local_transformers_in_process")
         self.assertFalse(report["proves_model_quality"])
@@ -89,14 +117,52 @@ class SmallCandidateProvisionTests(unittest.TestCase):
         self.assertEqual(report["failure_class"], "unsupported_capability")
         self.assertFalse(report["manual_action_required"])
 
+    def test_qwen_candidate_can_be_selected_explicitly_and_writes_qwen_config(self):
+        seen = []
+        with tempfile.TemporaryDirectory(dir=".") as td:
+            destination = os.path.join(td, "qwen")
+            config_path = os.path.join(td, "qwen_config.json")
+            fake_module = fake_transformers_download_module(seen=seen)
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
+                    report = provision_small_candidate_model(
+                        model_id="Qwen/Qwen2.5-Coder-0.5B-Instruct",
+                        destination=destination,
+                        config_path=config_path,
+                    )
+
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["selected_model_id"], "Qwen/Qwen2.5-Coder-0.5B-Instruct")
+        self.assertEqual(seen[0][0], "Qwen/Qwen2.5-Coder-0.5B-Instruct")
+        self.assertIn("qwen", config["agent"]["backend_model_id_or_path"].lower())
+        self.assertTrue(config["agent"]["backend_local_files_only"])
+        self.assertFalse(report["proves_model_quality"])
+
+    def test_qwen_static_smoke_config_is_local_only_and_non_default(self):
+        path = os.path.join("configs", "backend_smoke_qwen2_5_coder_0_5b.json")
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        agent = payload["agent"]
+        self.assertEqual(agent["backend_kind"], "local_transformers_in_process")
+        self.assertIn("qwen2.5-coder-0.5b-instruct", agent["backend_model_id_or_path"])
+        self.assertTrue(agent["backend_local_files_only"])
+        self.assertFalse(agent["backend_trust_remote_code"])
+        self.assertLessEqual(agent["backend_max_new_tokens"], 512)
+
     def test_download_failures_are_reported_without_fake_success(self):
         with tempfile.TemporaryDirectory(dir=".") as td:
             fake_module = fake_transformers_download_module(fail=True)
             with patch.dict(sys.modules, {"transformers": fake_module}):
-                report = provision_small_candidate_model(
-                    destination=os.path.join(td, "candidate"),
-                    config_path=os.path.join(td, "config.json"),
-                )
+                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(fail=True)):
+                    report = provision_small_candidate_model(
+                        model_id="HuggingFaceTB/SmolLM2-135M-Instruct",
+                        destination=os.path.join(td, "candidate"),
+                        config_path=os.path.join(td, "config.json"),
+                    )
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "failed")

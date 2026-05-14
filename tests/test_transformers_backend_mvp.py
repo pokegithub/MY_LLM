@@ -45,6 +45,7 @@ def fake_transformers_sequence(output_texts):
 
     class FakeTokenizer:
         model_max_length = 128
+        chat_template = None
 
         def __call__(self, prompt, return_tensors=None, **kwargs):
             return {"input_ids": [[1, 2, 3]]}
@@ -54,6 +55,46 @@ def fake_transformers_sequence(output_texts):
             value = outputs[index]
             state["index"] += 1
             return value
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def generate(self, **kwargs):
+            return [[1, 2, 3, 4]]
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeTokenizer()
+
+    class AutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeModel()
+
+    return types.SimpleNamespace(
+        __version__="fake",
+        AutoTokenizer=AutoTokenizer,
+        AutoModelForCausalLM=AutoModelForCausalLM,
+    )
+
+
+def fake_chat_transformers_module(output_text: str, seen_prompts):
+    class FakeTokenizer:
+        model_max_length = 128
+        chat_template = "{{ messages }}"
+
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+            seen_prompts.append(messages[0]["content"])
+            return "CHAT:" + messages[0]["content"]
+
+        def __call__(self, prompt, return_tensors=None, **kwargs):
+            seen_prompts.append(prompt)
+            return {"input_ids": [[1, 2, 3]]}
+
+        def decode(self, generated, skip_special_tokens=True):
+            return output_text
 
     class FakeModel:
         def eval(self):
@@ -439,6 +480,23 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["generation_attempts"], 3)
         self.assertEqual(report["malformed_retry_count"], 2)
         self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_passed")
+
+    def test_chat_template_is_used_when_available_without_weakening_schema(self):
+        seen_prompts = []
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_chat_transformers_module(
+                valid_candidate_json(path="backend_smoke_target.py", content="def value():\n    return 4\n"),
+                seen_prompts,
+            )
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertTrue(any(str(item).startswith("CHAT:") for item in seen_prompts))
 
 
 if __name__ == "__main__":

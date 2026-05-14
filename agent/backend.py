@@ -385,27 +385,30 @@ def _format_retry_prompt(
     parse_error: BackendCandidateError,
     retry_index: int,
 ) -> str:
-    payload = {
-        "purpose": "format_repair_only",
-        "retry_index": retry_index,
-        "parse_or_schema_error": {
-            "failure_class": parse_error.failure_class,
-            "message": parse_error.message,
-        },
-        "required_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
-        "candidate_json_schema": structured_candidate_schema(),
-        "original_candidate_request": base_prompt,
-        "previous_invalid_output_excerpt": str(previous_output)[:1200],
-        "constraints": [
-            "Return exactly one JSON object and nothing else.",
-            "Do not wrap the JSON in markdown.",
-            "Do not explain the fix.",
-            "Do not invent a new task or new target file.",
-            "Use only the same task context and allowed file paths from the original request.",
+    return "\n".join(
+        [
+            "FORMAT REPAIR ONLY.",
+            f"Retry index: {retry_index}",
+            f"Previous failure class: {parse_error.failure_class}",
+            f"Previous parser/schema message: {parse_error.message}",
+            "",
+            "Return exactly one candidate JSON object and nothing else.",
+            "The first character of your response must be { and the final character must be }.",
+            "Do not use markdown fences. Do not explain. Do not copy the request.",
+            "Allowed top-level keys: candidate_id, summary, edits, supported_failure_classes.",
+            "Required top-level keys: candidate_id, summary, edits.",
+            "Forbidden top-level keys: purpose, task, plan, context, extra, candidate_json_schema, allowed_target_files, constraints.",
+            "The edits array must contain at least one object with path and new_content.",
+            "Use the same task context and allowed file paths from the original request.",
             "Verifier decides correctness; do not claim success.",
-        ],
-    }
-    return json.dumps(payload, indent=2, sort_keys=True)
+            "",
+            "Previous invalid output excerpt:",
+            str(previous_output)[:1200],
+            "",
+            "Original request follows. Do not copy its keys; answer only with the candidate JSON object:",
+            base_prompt,
+        ]
+    )
 
 
 def _import_transformers_module():
@@ -528,27 +531,70 @@ def _candidate_contract_prompt(
     plan: SolvePlan,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> str:
-    payload = {
-        "purpose": purpose,
-        "task": request.task_text,
-        "file_hints": list(request.file_hints),
-        "plan": _plan_summary(plan),
-        "context": _compact_context(context),
-        "extra": dict(extra or {}),
-        "required_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
-        "candidate_json_schema": structured_candidate_schema(),
-        "allowed_target_files": list(plan.target_files or request.file_hints),
-        "constraints": [
-            "Return strict JSON only. No markdown fences, no prose, no comments.",
-            "Use only workspace-relative file paths.",
-            "Use only allowed_target_files unless the plan explicitly requires another workspace file.",
-            "Make the smallest relevant full-file replacement edit.",
-            "Do not edit unrelated files.",
-            "Do not claim correctness; the verifier decides success.",
-            "Do not include hidden reasoning.",
+    allowed_target_files = list(plan.target_files or request.file_hints)
+    schema_example = {
+        "candidate_id": "short-stable-id",
+        "summary": "one sentence describing the intended edit",
+        "edits": [
+            {
+                "path": allowed_target_files[0] if allowed_target_files else "workspace-relative/path.py",
+                "new_content": "full replacement file content",
+            }
         ],
     }
-    return json.dumps(payload, indent=2, sort_keys=True)
+    sections = [
+        "You are producing one machine-readable code-edit candidate for a verifier-controlled coding agent.",
+        f"Purpose: {purpose}",
+        f"Contract version: {STRUCTURED_CANDIDATE_CONTRACT_VERSION}",
+        "",
+        "OUTPUT RULES:",
+        "- Return exactly one JSON object and nothing else.",
+        "- The first character of your response must be { and the final character must be }.",
+        "- Do not use markdown fences.",
+        "- Do not explain the edit.",
+        "- Do not copy these instructions.",
+        "- Do not include hidden reasoning.",
+        "- Do not claim correctness; the verifier decides success.",
+        "",
+        "REQUIRED TOP-LEVEL KEYS:",
+        "- candidate_id: non-empty string.",
+        "- summary: non-empty string, not a success claim.",
+        "- edits: non-empty array.",
+        "",
+        "ALLOWED OPTIONAL TOP-LEVEL KEY:",
+        "- supported_failure_classes: optional array of repair-scoping labels.",
+        "",
+        "FORBIDDEN TOP-LEVEL KEYS:",
+        "- purpose, task, plan, context, extra, candidate_json_schema, allowed_target_files, constraints.",
+        "",
+        "EDIT RULES:",
+        "- Each edit must contain path and new_content.",
+        "- path must be workspace-relative.",
+        "- new_content must be non-empty full replacement file content.",
+        "- Use only allowed target files unless the task clearly requires another workspace file.",
+        "- Make the smallest relevant full-file replacement edit.",
+        "",
+        "JSON SHAPE EXAMPLE. Replace values with the actual candidate; do not copy placeholder text:",
+        json.dumps(schema_example, indent=2),
+        "",
+        "TASK:",
+        request.task_text,
+        "",
+        "FILE HINTS:",
+        json.dumps(list(request.file_hints), indent=2),
+        "",
+        "ALLOWED TARGET FILES:",
+        json.dumps(allowed_target_files, indent=2),
+        "",
+        "PLAN SUMMARY:",
+        json.dumps(_plan_summary(plan), indent=2, sort_keys=True),
+        "",
+        "CONTEXT:",
+        _compact_context(context),
+    ]
+    if extra:
+        sections.extend(["", "EXTRA CONTEXT:", json.dumps(dict(extra), indent=2, sort_keys=True)])
+    return "\n".join(sections)
 
 
 def _input_length(encoded: Mapping[str, Any]) -> int:
@@ -639,8 +685,25 @@ class LocalTransformersInProcessBackend:
         context_limit = min(values)
         return max(1, context_limit - max(1, self.max_new_tokens))
 
+    def _format_generation_prompt(self, prompt: str) -> str:
+        apply_chat_template = getattr(self._tokenizer, "apply_chat_template", None)
+        chat_template = getattr(self._tokenizer, "chat_template", None)
+        if callable(apply_chat_template) and chat_template:
+            try:
+                formatted = apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                if isinstance(formatted, str) and formatted.strip():
+                    return formatted
+            except (TypeError, ValueError):
+                return prompt
+        return prompt
+
     def _generate_text(self, prompt: str) -> str:
         try:
+            prompt = self._format_generation_prompt(prompt)
             max_input_tokens = self._max_input_tokens()
             tokenizer_kwargs: Dict[str, Any] = {"return_tensors": "pt"}
             if max_input_tokens is not None:
@@ -683,6 +746,7 @@ class LocalTransformersInProcessBackend:
                 {
                     "attempt_index": attempt_index,
                     "raw_output_chars": len(raw_text),
+                    "raw_output_sample": raw_text[:240],
                     "raw_output_sha256": hashlib.sha256(raw_text.encode("utf-8", errors="replace")).hexdigest(),
                 }
             )
@@ -943,6 +1007,7 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
             last_attempt = attempts[-1]
             if isinstance(last_attempt, Mapping):
                 report["generated_text_chars"] = int(last_attempt.get("raw_output_chars") or 0)
+                report["generated_text_sample"] = last_attempt.get("raw_output_sample")
                 report["generated_text_sha256"] = last_attempt.get("raw_output_sha256")
         if report["generation_attempts"] > 0 and exc.failure_class != "runtime_execution_failed":
             report["generation_status"] = "passed"
@@ -1055,6 +1120,46 @@ def _download_and_save_transformers_model(
     payload = dict(source_payload)
     payload["schema"] = source_schema
     payload["model_id"] = model_id
+    with open(destination_path / "backend_model_source.json", "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def _snapshot_download_model_files(
+    *,
+    model_id: str,
+    destination_path: Path,
+    source_schema: str,
+    source_payload: Mapping[str, Any],
+) -> None:
+    from huggingface_hub import snapshot_download  # type: ignore
+
+    destination_path.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=model_id,
+        local_dir=str(destination_path),
+        allow_patterns=[
+            "*.json",
+            "*.safetensors",
+            "*.model",
+            "*.txt",
+            "*.jinja",
+            "tokenizer*",
+            "merges.txt",
+            "vocab.json",
+        ],
+        ignore_patterns=[
+            "*.gguf",
+            "*.onnx",
+            "*.tflite",
+            "*.msgpack",
+            "flax_model*",
+            "tf_model*",
+        ],
+    )
+    payload = dict(source_payload)
+    payload["schema"] = source_schema
+    payload["model_id"] = model_id
+    payload["provision_method"] = "huggingface_snapshot_download"
     with open(destination_path / "backend_model_source.json", "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
 
@@ -1193,8 +1298,7 @@ def provision_small_candidate_model(
             return report
 
         try:
-            _download_and_save_transformers_model(
-                transformers=transformers,
+            _snapshot_download_model_files(
                 model_id=option["model_id"],
                 destination_path=destination_path,
                 source_schema="backend_small_candidate_model_source_v1",

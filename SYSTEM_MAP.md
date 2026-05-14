@@ -194,6 +194,7 @@
 - Scope: Added autonomous provisioning for a small, ungated instruction-following Transformers smoke candidate. This is not the 7B/14B bakeoff and does not select a model.
 - `agent-backend-provision-small-candidate` tries the allowlisted priority order `HuggingFaceTB/SmolLM2-135M-Instruct` first, then `Qwen/Qwen2.5-Coder-0.5B-Instruct`; unlisted model ids are rejected by default.
 - Provisioned small candidates are stored under `run_artifacts/local_models/` and written to `configs/backend_smoke_small_candidate.json` for local-only backend smoke.
+- `configs/backend_smoke_qwen2_5_coder_0_5b.json` is a dedicated local-only smoke config for the Qwen2.5-Coder 0.5B path when that small coding model is explicitly provisioned.
 - RTX 2050 4 GB remains appropriate for small smoke/integration checks, not full 7B/14B local bakeoff.
 - Small-model load, generation, structured JSON compliance, or a toy verifier pass is not model-quality evidence and must not inflate SFT-positive trajectory eligibility.
 
