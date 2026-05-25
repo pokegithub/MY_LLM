@@ -196,6 +196,39 @@ class TrajectoryQualityTests(unittest.TestCase):
         self.assertTrue(item["rejected_for_positive_training"])
         self.assertIn(FIXTURE_ONLY, item["quality_classes"])
 
+    def test_backend_smoke_fixture_trace_does_not_inflate_sft_positive(self):
+        item = classify_trajectory(
+            base_record(
+                run_id="solve_qwen_tiny_fixture",
+                task_text="Change run_artifacts/qwen_tiny_solve_workspace/backend_smoke_target.py so value() returns 2.",
+                files_touched=["run_artifacts/qwen_tiny_solve_workspace/backend_smoke_target.py"],
+                attempts=[
+                    {
+                        "attempt_index": 1,
+                        "phase": "initial",
+                        "origin": "initial",
+                        "candidate_id": "short-stable-id",
+                        "candidate_summary": "tiny fixture repair",
+                        "files_touched": ["run_artifacts/qwen_tiny_solve_workspace/backend_smoke_target.py"],
+                        "kept": True,
+                        "verification": {
+                            "overall_passed": True,
+                            "meaningful": True,
+                            "summary": "all verification checks passed",
+                            "quality_claim": "verification_passed",
+                            "checks": [],
+                        },
+                    }
+                ],
+                winning_attempt=1,
+            )
+        )
+
+        self.assertFalse(item["eligible"]["sft_positive"])
+        self.assertTrue(item["rejected_for_positive_training"])
+        self.assertIn(FIXTURE_ONLY, item["quality_classes"])
+        self.assertIn("fixture_trace_not_positive_training_data", item["reasons"])
+
     def test_audit_summary_counts_are_explicit_and_non_overclaiming(self):
         with tempfile.TemporaryDirectory() as td:
             write_trajectory(td, "solve_real_backend", base_record())

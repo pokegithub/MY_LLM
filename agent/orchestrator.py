@@ -194,6 +194,15 @@ def _backend_status_with_failure(backend_status: Dict, exc: BackendCandidateErro
             "malformed_retry_count",
             "structured_output_parse_status",
             "structured_candidate_valid",
+            "raw_parse_status",
+            "normalization_attempted",
+            "normalization_applied",
+            "normalization_kind",
+            "normalization_rejected_reason",
+            "final_parse_status",
+            "final_schema_validation_status",
+            "schema_validation_status",
+            "unsafe_path_detected",
         ):
             if key in exc.details:
                 updated[key] = exc.details[key]

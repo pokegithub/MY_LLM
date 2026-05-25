@@ -47,10 +47,31 @@ SMALL_CANDIDATE_MODEL_OPTIONS = (
         "selection_reason": "second priority: small coding-focused instruction smoke model",
         "max_download_target_mb": 1800,
     },
+    {
+        "model_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        "destination": "./run_artifacts/local_models/qwen2.5-coder-1.5b-instruct",
+        "selection_reason": "explicit stronger small coding-focused instruction smoke model",
+        "max_download_target_mb": 4200,
+    },
 )
 ALLOWED_SMALL_CANDIDATE_MODEL_IDS = {item["model_id"] for item in SMALL_CANDIDATE_MODEL_OPTIONS}
+OPTIONAL_3B_CANDIDATE_MODEL_ID = "Qwen/Qwen2.5-Coder-3B-Instruct"
+OPTIONAL_3B_CANDIDATE_DEST = "./run_artifacts/local_models/qwen2.5-coder-3b-instruct"
 STRUCTURED_CANDIDATE_CONTRACT_VERSION = "structured_candidate_contract_v1"
+OUTPUT_NORMALIZATION_POLICY_VERSION = "output_normalization_policy_v1"
 MAX_FORMAT_RETRY_ATTEMPTS = 2
+PARSE_REPORT_FIELDS = (
+    "raw_parse_status",
+    "normalization_attempted",
+    "normalization_applied",
+    "normalization_kind",
+    "normalization_reason",
+    "normalization_rejected_reason",
+    "final_parse_status",
+    "final_schema_validation_status",
+    "schema_validation_status",
+    "unsafe_path_detected",
+)
 
 
 class BackendError(RuntimeError):
@@ -268,7 +289,7 @@ def structured_candidate_schema() -> Dict[str, Any]:
         },
         "rejected_cases": [
             "plain prose",
-            "markdown fenced JSON",
+            "markdown fenced JSON outside output_normalization_policy_v1",
             "partial JSON",
             "missing required fields",
             "absolute paths",
@@ -352,6 +373,99 @@ def candidate_from_payload(
     )
 
 
+def _candidate_parse_report_defaults() -> Dict[str, Any]:
+    return {
+        "output_normalization_policy_version": OUTPUT_NORMALIZATION_POLICY_VERSION,
+        "raw_parse_status": "not_attempted",
+        "normalization_attempted": False,
+        "normalization_applied": False,
+        "normalization_kind": None,
+        "normalization_reason": None,
+        "normalization_rejected_reason": None,
+        "final_parse_status": "not_attempted",
+        "final_schema_validation_status": "not_attempted",
+        "schema_validation_status": "not_attempted",
+        "unsafe_path_detected": False,
+    }
+
+
+def _reject_parse(
+    failure_class: str,
+    message: str,
+    parse_report: Mapping[str, Any],
+) -> BackendCandidateError:
+    return BackendCandidateError(
+        failure_class,
+        message,
+        details=dict(parse_report),
+    )
+
+
+def _format_json_error(exc: json.JSONDecodeError) -> str:
+    return f"line={exc.lineno} col={exc.colno}"
+
+
+def _single_outer_markdown_fence_body(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Return fenced body or a rejection reason for the narrow policy."""
+    lines = raw.splitlines()
+    if len(lines) < 3:
+        return None, "not_exactly_one_outer_markdown_fence"
+    opener = lines[0].strip()
+    closer = lines[-1].strip()
+    if not opener.startswith("```") or closer != "```":
+        return None, "prose_or_text_outside_markdown_fence"
+    fence_lines = [index for index, line in enumerate(lines) if line.strip().startswith("```")]
+    if fence_lines != [0, len(lines) - 1]:
+        return None, "multiple_markdown_fences_or_inner_fence"
+    language = opener[3:].strip().lower()
+    if language and language != "json":
+        return None, "unsupported_markdown_fence_language"
+    body = "\n".join(lines[1:-1]).strip()
+    if not body:
+        return None, "markdown_fence_content_empty"
+    return body, None
+
+
+def _normalized_payload_from_model_text(raw: str, parse_report: Dict[str, Any]) -> Any:
+    try:
+        payload = json.loads(raw)
+        parse_report["raw_parse_status"] = "passed"
+        parse_report["final_parse_status"] = "passed"
+        return payload
+    except json.JSONDecodeError as raw_exc:
+        parse_report["raw_parse_status"] = "failed"
+        parse_report["normalization_attempted"] = True
+        parse_report["normalization_reason"] = f"direct_json_parse_failed: {_format_json_error(raw_exc)}"
+
+    body, rejection_reason = _single_outer_markdown_fence_body(raw)
+    if rejection_reason:
+        parse_report["normalization_rejected_reason"] = rejection_reason
+        parse_report["final_parse_status"] = "failed"
+        raise _reject_parse(
+            "malformed_candidate_output",
+            f"backend output was not strict JSON and normalization was rejected: {rejection_reason}",
+            parse_report,
+        )
+    assert body is not None
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as fence_exc:
+        reason = f"fenced_content_not_json: {_format_json_error(fence_exc)}"
+        parse_report["normalization_rejected_reason"] = reason
+        parse_report["final_parse_status"] = "failed"
+        raise _reject_parse(
+            "malformed_candidate_output",
+            f"backend markdown-fenced output did not contain pure JSON: {reason}",
+            parse_report,
+        ) from fence_exc
+
+    parse_report["normalization_applied"] = True
+    parse_report["normalization_kind"] = "markdown_fence_stripped"
+    parse_report["normalization_rejected_reason"] = None
+    parse_report["final_parse_status"] = "passed"
+    return payload
+
+
 def candidate_from_model_text(
     text: str,
     *,
@@ -361,21 +475,42 @@ def candidate_from_model_text(
 ) -> Candidate:
     """Parse strict JSON-only backend output into a Candidate."""
     raw = str(text).strip()
+    parse_report = _candidate_parse_report_defaults()
     if not raw:
-        raise BackendCandidateError("malformed_candidate_output", "backend returned empty output")
+        parse_report["raw_parse_status"] = "failed"
+        parse_report["final_parse_status"] = "failed"
+        raise _reject_parse("malformed_candidate_output", "backend returned empty output", parse_report)
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise BackendCandidateError(
-            "malformed_candidate_output",
-            f"backend output was not strict JSON: line={exc.lineno} col={exc.colno}",
-        ) from exc
-    return candidate_from_payload(
-        payload,
-        source=source,
-        workspace_root=workspace_root,
-        metadata=metadata,
-    )
+        payload = _normalized_payload_from_model_text(raw, parse_report)
+        candidate = candidate_from_payload(
+            payload,
+            source=source,
+            workspace_root=workspace_root,
+            metadata={**dict(metadata or {}), **parse_report},
+        )
+    except BackendCandidateError as exc:
+        if exc.failure_class == "schema_validation_failed":
+            parse_report["final_schema_validation_status"] = "failed"
+            parse_report["schema_validation_status"] = "failed"
+            parse_report["unsafe_path_detected"] = _unsafe_path_detected(exc.failure_class, exc.message)
+            details = {**dict(exc.details or {}), **parse_report}
+            raise BackendCandidateError(
+                exc.failure_class,
+                exc.message,
+                details=details,
+            ) from exc
+        if exc.details:
+            details = {**parse_report, **dict(exc.details)}
+            raise BackendCandidateError(
+                exc.failure_class,
+                exc.message,
+                details=details,
+            ) from exc
+        raise
+
+    candidate.metadata["final_schema_validation_status"] = "passed"
+    candidate.metadata["schema_validation_status"] = "passed"
+    return candidate
 
 
 def _format_retry_prompt(
@@ -469,15 +604,34 @@ def _local_model_path_exists(model_id_or_path: Optional[str]) -> Optional[bool]:
     return None
 
 
+def _workspace_relative_prompt_path(path_text: str, workspace_root: str) -> str:
+    """Render paths for model prompts without changing validation rules."""
+    raw = str(path_text).strip()
+    if not raw:
+        return raw
+    root = Path(workspace_root).resolve()
+    path = Path(raw)
+    try:
+        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+        rel = os.path.relpath(resolved, root)
+        rel_path = Path(rel)
+        if not rel_path.is_absolute() and not any(part == ".." for part in rel_path.parts):
+            return rel.replace("\\", "/")
+    except (OSError, ValueError):
+        pass
+    return raw.replace("\\", "/")
+
+
 def _compact_context(context: ContextBundle) -> str:
     chunks = [f"workspace_root: {context.workspace_root}"]
     if context.notes:
         chunks.append("notes:\n" + "\n".join(f"- {note}" for note in context.notes))
     for file_item in context.files:
+        display_path = _workspace_relative_prompt_path(file_item.path, context.workspace_root)
         chunks.append(
             "\n".join(
                 [
-                    f"file: {file_item.path}",
+                    f"file: {display_path}",
                     f"exists: {file_item.exists}",
                     f"included: {file_item.included}",
                     "content_excerpt:",
@@ -492,10 +646,13 @@ def _compact_context(context: ContextBundle) -> str:
     return text[:limit] + "\n[context truncated by backend_prompt_max_chars]"
 
 
-def _plan_summary(plan: SolvePlan) -> Dict[str, Any]:
+def _plan_summary(plan: SolvePlan, workspace_root: Optional[str] = None) -> Dict[str, Any]:
+    target_files = list(plan.target_files)
+    if workspace_root:
+        target_files = [_workspace_relative_prompt_path(path, workspace_root) for path in target_files]
     return {
         "route": plan.route,
-        "target_files": list(plan.target_files),
+        "target_files": target_files,
         "checks": [
             {"check_type": check.check_type, "spec": check.spec, "meaningful": check.meaningful}
             for check in plan.checks
@@ -531,7 +688,10 @@ def _candidate_contract_prompt(
     plan: SolvePlan,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> str:
-    allowed_target_files = list(plan.target_files or request.file_hints)
+    allowed_target_files = [
+        _workspace_relative_prompt_path(path, context.workspace_root)
+        for path in (plan.target_files or request.file_hints)
+    ]
     schema_example = {
         "candidate_id": "short-stable-id",
         "summary": "one sentence describing the intended edit",
@@ -587,7 +747,7 @@ def _candidate_contract_prompt(
         json.dumps(allowed_target_files, indent=2),
         "",
         "PLAN SUMMARY:",
-        json.dumps(_plan_summary(plan), indent=2, sort_keys=True),
+        json.dumps(_plan_summary(plan, context.workspace_root), indent=2, sort_keys=True),
         "",
         "CONTEXT:",
         _compact_context(context),
@@ -768,11 +928,18 @@ class LocalTransformersInProcessBackend:
                         "format_retry_attempts": tuple(raw_attempts),
                     },
                 )
+                for key in PARSE_REPORT_FIELDS:
+                    if key in candidate.metadata:
+                        raw_attempts[-1][key] = candidate.metadata.get(key)
+                candidate.metadata["format_retry_attempts"] = tuple(raw_attempts)
                 return candidate
             except BackendCandidateError as exc:
                 last_error = exc
                 raw_attempts[-1]["failure_class"] = exc.failure_class
                 raw_attempts[-1]["failure_reason"] = exc.message
+                for key in PARSE_REPORT_FIELDS:
+                    if key in exc.details:
+                        raw_attempts[-1][key] = exc.details.get(key)
                 if attempt_index >= MAX_FORMAT_RETRY_ATTEMPTS:
                     break
                 current_prompt = _format_retry_prompt(
@@ -783,17 +950,23 @@ class LocalTransformersInProcessBackend:
                 )
 
         assert last_error is not None
+        final_details: Dict[str, Any] = {
+            "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
+            "generation_attempts": len(raw_attempts),
+            "malformed_retry_count": max(0, len(raw_attempts) - 1),
+            "structured_output_parse_status": "failed",
+            "structured_candidate_valid": False,
+            "format_retry_attempts": tuple(raw_attempts),
+        }
+        for key in PARSE_REPORT_FIELDS:
+            if key in last_error.details:
+                final_details[key] = last_error.details.get(key)
+        if final_details.get("final_parse_status") == "passed":
+            final_details["structured_output_parse_status"] = "passed"
         raise BackendCandidateError(
             last_error.failure_class,
             last_error.message,
-            details={
-                "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
-                "generation_attempts": len(raw_attempts),
-                "malformed_retry_count": max(0, len(raw_attempts) - 1),
-                "structured_output_parse_status": "failed",
-                "structured_candidate_valid": False,
-                "format_retry_attempts": tuple(raw_attempts),
-            },
+            details=final_details,
         )
 
     def generate_initial_candidate(
@@ -963,8 +1136,14 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
         "structured_contract_version": STRUCTURED_CANDIDATE_CONTRACT_VERSION,
         "generation_attempts": 0,
         "malformed_retry_count": 0,
+        "raw_parse_status": "not_attempted",
+        "normalization_attempted": False,
+        "normalization_applied": False,
+        "normalization_kind": None,
+        "normalization_rejected_reason": None,
         "final_parse_status": "not_attempted",
         "final_schema_validation_status": "not_attempted",
+        "schema_validation_status": "not_attempted",
         "structured_output_parse_status": "not_attempted",
         "structured_candidate_valid": False,
         "candidate_valid": False,
@@ -1011,16 +1190,32 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
                 report["generated_text_sha256"] = last_attempt.get("raw_output_sha256")
         if report["generation_attempts"] > 0 and exc.failure_class != "runtime_execution_failed":
             report["generation_status"] = "passed"
-        report["structured_output_parse_status"] = "failed"
-        report["final_parse_status"] = "failed"
-        report["final_schema_validation_status"] = "failed" if exc.failure_class == "schema_validation_failed" else "not_attempted"
+        for key in PARSE_REPORT_FIELDS:
+            if key in details:
+                report[key] = details.get(key)
+        if report["final_parse_status"] == "passed":
+            report["structured_output_parse_status"] = "passed"
+        else:
+            report["structured_output_parse_status"] = "failed"
+        if exc.failure_class == "schema_validation_failed":
+            report["final_schema_validation_status"] = "failed"
+            report["schema_validation_status"] = "failed"
+        elif report["final_schema_validation_status"] == "not_attempted":
+            report["schema_validation_status"] = "not_attempted"
         report["tiny_candidate_generation_status"] = "failed"
         report["failure_class"] = exc.failure_class
         report["failure_reason"] = exc.message
         report["rejected_reason"] = exc.message
-        report["unsafe_path_detected"] = _unsafe_path_detected(exc.failure_class, exc.message)
+        report["unsafe_path_detected"] = bool(
+            report.get("unsafe_path_detected")
+            or _unsafe_path_detected(exc.failure_class, exc.message)
+        )
         if report["generation_status"] == "passed":
-            if report["malformed_retry_count"] > 0:
+            if report.get("normalization_rejected_reason") and report.get("normalization_rejected_reason") != "not_exactly_one_outer_markdown_fence":
+                report["smoke_level"] = "model_loaded_generation_succeeded_normalization_rejected"
+            elif report.get("normalization_applied") and exc.failure_class == "schema_validation_failed":
+                report["smoke_level"] = "model_loaded_generation_succeeded_normalized_schema_failed"
+            elif report["malformed_retry_count"] > 0:
                 report["smoke_level"] = "model_loaded_generation_succeeded_parse_retried_failed"
             else:
                 report["smoke_level"] = "model_loaded_generation_succeeded_parse_failed"
@@ -1041,12 +1236,26 @@ def backend_smoke_report(*, workspace_root: str = ".") -> Dict[str, Any]:
     report["structured_output_parse_status"] = "passed"
     report["final_parse_status"] = "passed"
     report["final_schema_validation_status"] = "passed"
+    report["schema_validation_status"] = "passed"
     report["structured_candidate_valid"] = True
     report["candidate_valid"] = True
     report["generation_attempts"] = int(candidate.metadata.get("generation_attempts") or 1)
     report["malformed_retry_count"] = int(candidate.metadata.get("malformed_retry_count") or 0)
+    attempts = candidate.metadata.get("format_retry_attempts") or ()
+    if attempts:
+        last_attempt = attempts[-1]
+        if isinstance(last_attempt, Mapping):
+            report["generated_text_chars"] = int(last_attempt.get("raw_output_chars") or 0)
+            report["generated_text_sample"] = last_attempt.get("raw_output_sample")
+            report["generated_text_sha256"] = last_attempt.get("raw_output_sha256")
+    for key in PARSE_REPORT_FIELDS:
+        if key in candidate.metadata:
+            report[key] = candidate.metadata.get(key)
     report["tiny_candidate_generation_status"] = "candidate_generated"
-    report["smoke_level"] = "model_loaded_generation_succeeded_parse_passed"
+    if report.get("normalization_applied"):
+        report["smoke_level"] = "model_loaded_generation_succeeded_normalized_parse_passed"
+    else:
+        report["smoke_level"] = "model_loaded_generation_succeeded_parse_passed"
     report["candidate_summary"] = {
         "candidate_id": candidate.candidate_id,
         "source": candidate.source,
@@ -1164,6 +1373,31 @@ def _snapshot_download_model_files(
         json.dump(payload, handle, indent=2, sort_keys=True)
 
 
+def _huggingface_model_safety_metadata(model_id: str) -> Dict[str, Any]:
+    """Best-effort Hub metadata check; allowlist remains the primary safety gate."""
+    try:
+        from huggingface_hub import HfApi  # type: ignore
+
+        info = HfApi().model_info(model_id)
+        card_data = getattr(info, "cardData", None) or {}
+        if not isinstance(card_data, Mapping):
+            card_data = {}
+        return {
+            "metadata_lookup_status": "passed",
+            "hub_private": bool(getattr(info, "private", False)),
+            "hub_gated": getattr(info, "gated", False),
+            "license": card_data.get("license") or "unknown",
+        }
+    except Exception as exc:
+        return {
+            "metadata_lookup_status": "unverified",
+            "metadata_lookup_failure": str(exc),
+            "hub_private": None,
+            "hub_gated": None,
+            "license": "unknown",
+        }
+
+
 def _candidate_options_for(model_id: Optional[str], destination: Optional[str]) -> tuple[Dict[str, Any], ...]:
     if model_id:
         if model_id not in ALLOWED_SMALL_CANDIDATE_MODEL_IDS:
@@ -1202,6 +1436,7 @@ def provision_small_candidate_model(
         "config_path": str(Path(config_path).resolve()),
         "downloaded_autonomously": False,
         "internet_required": True,
+        "internet_used": False,
         "local_files_only_after_provisioning": True,
         "smoke_only": True,
         "proves_model_quality": False,
@@ -1260,6 +1495,7 @@ def provision_small_candidate_model(
             "model_id": option["model_id"],
             "destination": str(destination_path),
             "selection_reason": option.get("selection_reason"),
+            "max_download_target_mb": option.get("max_download_target_mb"),
             "status": "not_started",
         }
         report["attempts"].append(attempt)
@@ -1289,6 +1525,7 @@ def provision_small_candidate_model(
                     "destination": str(destination_path),
                     "config_path": config_written,
                     "downloaded_autonomously": False,
+                    "internet_used": False,
                     "status": "already_present",
                     "ok": True,
                     "artifact_summary": summary,
@@ -1296,6 +1533,19 @@ def provision_small_candidate_model(
                 }
             )
             return report
+
+        safety_metadata = _huggingface_model_safety_metadata(option["model_id"])
+        attempt["hub_metadata"] = safety_metadata
+        gated = safety_metadata.get("hub_gated")
+        if safety_metadata.get("hub_private") is True or gated not in (False, None):
+            attempt.update(
+                {
+                    "status": "rejected",
+                    "failure_class": "restricted_or_gated_model",
+                    "failure_reason": "model metadata indicates private or gated access",
+                }
+            )
+            continue
 
         try:
             _snapshot_download_model_files(
@@ -1310,6 +1560,7 @@ def provision_small_candidate_model(
                     "quality_claim": "none",
                     "selection_reason": option.get("selection_reason"),
                     "max_download_target_mb": option.get("max_download_target_mb"),
+                    "hub_metadata": safety_metadata,
                 },
             )
             config_written = _write_backend_config(config_path, destination_path)
@@ -1321,6 +1572,7 @@ def provision_small_candidate_model(
                     "destination": str(destination_path),
                     "config_path": config_written,
                     "downloaded_autonomously": True,
+                    "internet_used": True,
                     "status": "provisioned",
                     "ok": True,
                     "artifact_summary": summary,
@@ -1347,6 +1599,34 @@ def provision_small_candidate_model(
         }
     )
     return report
+
+
+def probe_optional_qwen_3b_readiness(
+    *,
+    destination: str = OPTIONAL_3B_CANDIDATE_DEST,
+) -> Dict[str, Any]:
+    """Report whether the optional 3B candidate is already local; never downloads."""
+    destination_path = Path(destination).expanduser().resolve()
+    summary = _directory_summary(destination_path)
+    local_ready = _looks_like_transformers_model_dir(destination_path)
+    return {
+        "schema": "optional_small_candidate_probe_v1",
+        "model_id": OPTIONAL_3B_CANDIDATE_MODEL_ID,
+        "destination": str(destination_path),
+        "download_attempted": False,
+        "download_allowed_by_default": False,
+        "status": "already_present" if local_ready else "not_attempted_due_to_hardware_or_policy",
+        "local_availability_status": "available_locally" if local_ready else "not_available_locally",
+        "artifact_summary": summary,
+        "reason": (
+            "local Transformers-compatible 3B directory detected"
+            if local_ready
+            else "3B is optional and not auto-downloaded on RTX 2050 4GB without a separate guarded opt-in"
+        ),
+        "proves_model_quality": False,
+        "bakeoff_winner_claim": "none",
+        "quality_claim": "none",
+    }
 
 
 def provision_tiny_transformers_model(

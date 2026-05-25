@@ -198,6 +198,38 @@
 - RTX 2050 4 GB remains appropriate for small smoke/integration checks, not full 7B/14B local bakeoff.
 - Small-model load, generation, structured JSON compliance, or a toy verifier pass is not model-quality evidence and must not inflate SFT-positive trajectory eligibility.
 
+### Phase A strict output normalization update
+
+- Date: 2026-05-25
+- Scope: Added a narrow `output_normalization_policy_v1` for backend-generated candidate text. This is a formatting guardrail only, not a model-quality claim.
+- `backend_integration/output_normalization_policy_v1.*` defines the single allowed normalization case: exactly one outer markdown JSON fence, optional `json` language tag, no prose before or after the fence, and pure JSON inside the fence.
+- Normalization is logged through `raw_parse_status`, `normalization_attempted`, `normalization_applied`, `normalization_kind`, `normalization_rejected_reason`, `final_parse_status`, `schema_validation_status`, and `unsafe_path_detected`.
+- Normalized payloads still run through `structured_candidate_contract_v1`, `Candidate`, and `FileEdit` validation. Schema-valid output remains separate from code correctness, and verifier authority is unchanged.
+- Absolute path conversion is not implemented. Absolute paths, parent traversal, unsafe workspace paths, empty edits, and empty `new_content` remain rejected.
+- Backend smoke fixtures and tiny verifier targets remain fixture-only in trajectory-quality audit even when a real backend reaches verification, so they do not inflate SFT-positive eligibility.
+- Exact symbolic tasks still bypass backend loading, no-backend coding tasks still fail closed, and the 7B/14B bakeoff remains unexecuted.
+
+### Phase A hidden-eval seed execution update
+
+- Date: 2026-05-25
+- Scope: Added a narrow private hidden-eval seed execution path for Phase A smoke evidence. This is not the full 7B/14B bakeoff and does not train or tune the model.
+- New CLI command:
+  - `hidden-eval-seed-run`
+- `eval_harness/hidden_seed_runner.py` runs a small selected seed subset, routes exact/checkable need-tool items deterministically, routes coding items through the configured backend and verifier, and marks retrieval/source-grounded categories unsupported until citation/retrieval implementation exists.
+- Per-item and summary reports are written under `run_artifacts/hidden_eval_runs/<run_id>/`. Public summaries include counts, routes, status, verifier reachability, and leakage flags only; private target answers are not exposed.
+- The default coding backend config points at the local Qwen2.5-Coder 0.5B smoke config. Qwen seed-run success is verifier/eval evidence only, not model-quality proof.
+- Hidden-eval workspaces are fixture/holdout material and are excluded from SFT-positive trajectory eligibility by the trajectory-quality audit.
+
+### Phase A stronger small coding-model smoke update
+
+- Date: 2026-05-25
+- Scope: Added an explicit Qwen2.5-Coder 1.5B small-model smoke path. This is still Phase A smoke evidence, not a 7B/14B bakeoff, not training, and not a model-quality claim.
+- `agent-backend-provision-small-candidate` may explicitly provision `Qwen/Qwen2.5-Coder-1.5B-Instruct` to `run_artifacts/local_models/qwen2.5-coder-1.5b-instruct`; unlisted and large 7B/14B model ids remain rejected by the allowlist.
+- `configs/backend_smoke_qwen2_5_coder_1_5b.json` is a local-only backend config for the 1.5B smoke path. It is not enabled by default.
+- The optional Qwen2.5-Coder 3B readiness probe is no-download by default and reports `not_attempted_due_to_hardware_or_policy` when the model is not already local. 3B failure or absence must not block 1.5B evidence.
+- Hidden-eval seed runs can be pointed at model-specific backend configs. Exact tasks still bypass the backend, and retrieval/source-grounded hidden items remain unsupported until retrieval/citation implementation exists.
+- Small-model comparison reports are non-leaderboard status summaries only: no winner is selected, no bakeoff is executed, and verifier reachability on a tiny hidden subset is not proof of general coding ability.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

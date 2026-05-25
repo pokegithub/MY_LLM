@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 from agent.backend import (
     ALLOWED_SMALL_CANDIDATE_MODEL_IDS,
+    OPTIONAL_3B_CANDIDATE_MODEL_ID,
     SMALL_CANDIDATE_MODEL_OPTIONS,
+    probe_optional_qwen_3b_readiness,
     provision_small_candidate_model,
 )
 
@@ -89,11 +91,17 @@ class SmallCandidateProvisionTests(unittest.TestCase):
             config_path = os.path.join(td, "backend_config.json")
             fake_module = fake_transformers_download_module(seen=seen)
             with patch.dict(sys.modules, {"transformers": fake_module}):
-                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
-                    report = provision_small_candidate_model(
-                        destination=destination,
-                        config_path=config_path,
-                    )
+                with patch("agent.backend._huggingface_model_safety_metadata", return_value={
+                    "metadata_lookup_status": "passed",
+                    "hub_private": False,
+                    "hub_gated": False,
+                    "license": "apache-2.0",
+                }):
+                    with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
+                        report = provision_small_candidate_model(
+                            destination=destination,
+                            config_path=config_path,
+                        )
 
             with open(config_path, "r", encoding="utf-8") as handle:
                 config = json.load(handle)
@@ -124,12 +132,18 @@ class SmallCandidateProvisionTests(unittest.TestCase):
             config_path = os.path.join(td, "qwen_config.json")
             fake_module = fake_transformers_download_module(seen=seen)
             with patch.dict(sys.modules, {"transformers": fake_module}):
-                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
-                    report = provision_small_candidate_model(
-                        model_id="Qwen/Qwen2.5-Coder-0.5B-Instruct",
-                        destination=destination,
-                        config_path=config_path,
-                    )
+                with patch("agent.backend._huggingface_model_safety_metadata", return_value={
+                    "metadata_lookup_status": "passed",
+                    "hub_private": False,
+                    "hub_gated": False,
+                    "license": "apache-2.0",
+                }):
+                    with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
+                        report = provision_small_candidate_model(
+                            model_id="Qwen/Qwen2.5-Coder-0.5B-Instruct",
+                            destination=destination,
+                            config_path=config_path,
+                        )
 
             with open(config_path, "r", encoding="utf-8") as handle:
                 config = json.load(handle)
@@ -153,16 +167,74 @@ class SmallCandidateProvisionTests(unittest.TestCase):
         self.assertFalse(agent["backend_trust_remote_code"])
         self.assertLessEqual(agent["backend_max_new_tokens"], 512)
 
+    def test_qwen_1_5b_candidate_can_be_selected_explicitly(self):
+        seen = []
+        with tempfile.TemporaryDirectory(dir=".") as td:
+            destination = os.path.join(td, "qwen_1_5b")
+            config_path = os.path.join(td, "qwen_1_5b_config.json")
+            fake_module = fake_transformers_download_module(seen=seen)
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with patch("agent.backend._huggingface_model_safety_metadata", return_value={
+                    "metadata_lookup_status": "passed",
+                    "hub_private": False,
+                    "hub_gated": False,
+                    "license": "apache-2.0",
+                }):
+                    with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(seen=seen)):
+                        report = provision_small_candidate_model(
+                            model_id="Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                            destination=destination,
+                            config_path=config_path,
+                        )
+
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["selected_model_id"], "Qwen/Qwen2.5-Coder-1.5B-Instruct")
+        self.assertEqual(seen[0][0], "Qwen/Qwen2.5-Coder-1.5B-Instruct")
+        self.assertTrue(report["internet_used"])
+        self.assertIn("qwen_1_5b", config["agent"]["backend_model_id_or_path"].lower())
+        self.assertFalse(report["proves_model_quality"])
+
+    def test_qwen_1_5b_static_smoke_config_is_local_only(self):
+        path = os.path.join("configs", "backend_smoke_qwen2_5_coder_1_5b.json")
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        agent = payload["agent"]
+        self.assertEqual(agent["backend_kind"], "local_transformers_in_process")
+        self.assertIn("qwen2.5-coder-1.5b-instruct", agent["backend_model_id_or_path"])
+        self.assertTrue(agent["backend_local_files_only"])
+        self.assertFalse(agent["backend_trust_remote_code"])
+        self.assertLessEqual(agent["backend_max_new_tokens"], 512)
+
+    def test_optional_3b_probe_is_guarded_and_does_not_download(self):
+        with tempfile.TemporaryDirectory(dir=".") as td:
+            report = probe_optional_qwen_3b_readiness(destination=os.path.join(td, "missing_3b"))
+
+        self.assertEqual(report["model_id"], OPTIONAL_3B_CANDIDATE_MODEL_ID)
+        self.assertEqual(report["status"], "not_attempted_due_to_hardware_or_policy")
+        self.assertFalse(report["download_attempted"])
+        self.assertFalse(report["download_allowed_by_default"])
+        self.assertEqual(report["quality_claim"], "none")
+
     def test_download_failures_are_reported_without_fake_success(self):
         with tempfile.TemporaryDirectory(dir=".") as td:
             fake_module = fake_transformers_download_module(fail=True)
             with patch.dict(sys.modules, {"transformers": fake_module}):
-                with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(fail=True)):
-                    report = provision_small_candidate_model(
-                        model_id="HuggingFaceTB/SmolLM2-135M-Instruct",
-                        destination=os.path.join(td, "candidate"),
-                        config_path=os.path.join(td, "config.json"),
-                    )
+                with patch("agent.backend._huggingface_model_safety_metadata", return_value={
+                    "metadata_lookup_status": "passed",
+                    "hub_private": False,
+                    "hub_gated": False,
+                    "license": "apache-2.0",
+                }):
+                    with patch("agent.backend._snapshot_download_model_files", side_effect=fake_snapshot_download(fail=True)):
+                        report = provision_small_candidate_model(
+                            model_id="HuggingFaceTB/SmolLM2-135M-Instruct",
+                            destination=os.path.join(td, "candidate"),
+                            config_path=os.path.join(td, "config.json"),
+                        )
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["status"], "failed")
@@ -177,6 +249,7 @@ class SmallCandidateProvisionTests(unittest.TestCase):
             {
                 "HuggingFaceTB/SmolLM2-135M-Instruct",
                 "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
             },
         )
 

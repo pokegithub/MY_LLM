@@ -156,19 +156,27 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(schema["required"], ["candidate_id", "summary", "edits"])
         rejected = set(schema["rejected_cases"])
         self.assertIn("plain prose", rejected)
-        self.assertIn("markdown fenced JSON", rejected)
+        self.assertIn("markdown fenced JSON outside output_normalization_policy_v1", rejected)
         self.assertIn("empty new_content", rejected)
 
     def test_structured_candidate_contract_artifacts_exist(self):
         markdown_path = os.path.join("backend_integration", "structured_candidate_contract_v1.md")
         json_path = os.path.join("backend_integration", "structured_candidate_contract_v1.json")
+        policy_markdown_path = os.path.join("backend_integration", "output_normalization_policy_v1.md")
+        policy_json_path = os.path.join("backend_integration", "output_normalization_policy_v1.json")
 
         self.assertTrue(os.path.exists(markdown_path))
+        self.assertTrue(os.path.exists(policy_markdown_path))
         with open(json_path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
+        with open(policy_json_path, "r", encoding="utf-8") as handle:
+            policy = json.load(handle)
 
         self.assertEqual(payload["schema"], "structured_candidate_contract_v1")
         self.assertEqual(payload["malformed_output_retry_policy"]["max_format_retries"], 2)
+        self.assertEqual(policy["schema"], "output_normalization_policy_v1")
+        self.assertIn("single_outer_markdown_json_fence", str(policy["allowed_normalization_cases"]))
+        self.assertFalse(policy["path_handling"]["absolute_to_relative_conversion_implemented"])
         self.assertFalse(payload["proves_real_coding_ability"])
         self.assertEqual(payload["quality_claim"], "none")
 
@@ -452,12 +460,78 @@ class TransformersBackendMvpTests(unittest.TestCase):
                 candidate_from_model_text("plain prose", source="test", workspace_root=td)
         self.assertIn("malformed_candidate_output", str(caught.exception))
 
-    def test_candidate_parser_rejects_markdown_wrapped_json(self):
+    def test_candidate_parser_accepts_raw_json_without_normalization(self):
+        with tempfile.TemporaryDirectory() as td:
+            candidate = candidate_from_model_text(valid_candidate_json(), source="test", workspace_root=td)
+
+        self.assertEqual(candidate.candidate_id, "model-fix")
+        self.assertEqual(candidate.metadata["raw_parse_status"], "passed")
+        self.assertFalse(candidate.metadata["normalization_attempted"])
+        self.assertFalse(candidate.metadata["normalization_applied"])
+        self.assertEqual(candidate.metadata["final_parse_status"], "passed")
+        self.assertEqual(candidate.metadata["schema_validation_status"], "passed")
+
+    def test_candidate_parser_accepts_single_markdown_fenced_json_with_logged_normalization(self):
         with tempfile.TemporaryDirectory() as td:
             wrapped = "```json\n" + valid_candidate_json() + "\n```"
+            candidate = candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
+        self.assertEqual(candidate.candidate_id, "model-fix")
+        self.assertEqual(candidate.metadata["raw_parse_status"], "failed")
+        self.assertTrue(candidate.metadata["normalization_attempted"])
+        self.assertTrue(candidate.metadata["normalization_applied"])
+        self.assertEqual(candidate.metadata["normalization_kind"], "markdown_fence_stripped")
+        self.assertEqual(candidate.metadata["final_parse_status"], "passed")
+        self.assertEqual(candidate.metadata["schema_validation_status"], "passed")
+
+    def test_candidate_parser_rejects_fenced_json_with_prose(self):
+        with tempfile.TemporaryDirectory() as td:
+            wrapped = "Here is JSON:\n```json\n" + valid_candidate_json() + "\n```"
             with self.assertRaises(Exception) as caught:
                 candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
+        exc = caught.exception
+        self.assertIn("malformed_candidate_output", str(exc))
+        self.assertEqual(exc.details["normalization_rejected_reason"], "prose_or_text_outside_markdown_fence")
+
+    def test_candidate_parser_rejects_multiple_markdown_fences(self):
+        with tempfile.TemporaryDirectory() as td:
+            wrapped = "```json\n" + valid_candidate_json() + "\n```\n```json\n" + valid_candidate_json() + "\n```"
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
         self.assertIn("malformed_candidate_output", str(caught.exception))
+        self.assertEqual(caught.exception.details["normalization_rejected_reason"], "multiple_markdown_fences_or_inner_fence")
+
+    def test_candidate_parser_rejects_partial_json_inside_fence(self):
+        with tempfile.TemporaryDirectory() as td:
+            wrapped = "```json\n{\"candidate_id\": \"partial\"\n```"
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
+        self.assertIn("malformed_candidate_output", str(caught.exception))
+        self.assertIn("fenced_content_not_json", caught.exception.details["normalization_rejected_reason"])
+
+    def test_candidate_parser_rejects_markdown_fenced_non_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            wrapped = "```json\nnot json\n```"
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
+        self.assertIn("malformed_candidate_output", str(caught.exception))
+        self.assertIn("fenced_content_not_json", caught.exception.details["normalization_rejected_reason"])
+
+    def test_candidate_parser_rejects_absolute_path_without_conversion(self):
+        with tempfile.TemporaryDirectory() as td:
+            absolute_path = os.path.join(td, "demo.py")
+            wrapped = "```json\n" + valid_candidate_json(path=absolute_path) + "\n```"
+            with self.assertRaises(Exception) as caught:
+                candidate_from_model_text(wrapped, source="test", workspace_root=td)
+
+        self.assertIn("schema_validation_failed", str(caught.exception))
+        self.assertTrue(caught.exception.details["normalization_applied"])
+        self.assertTrue(caught.exception.details["unsafe_path_detected"])
+        self.assertEqual(caught.exception.details["schema_validation_status"], "failed")
 
     def test_bounded_retry_can_accept_valid_json_after_format_repair(self):
         with tempfile.TemporaryDirectory() as td:
@@ -480,6 +554,50 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(report["generation_attempts"], 3)
         self.assertEqual(report["malformed_retry_count"], 2)
         self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_parse_passed")
+
+    def test_backend_smoke_reports_markdown_fence_normalization(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_module(
+                "```json\n"
+                + valid_candidate_json(path="backend_smoke_target.py", content="def value():\n    return 5\n")
+                + "\n```"
+            )
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertEqual(report["generation_status"], "passed")
+        self.assertEqual(report["raw_parse_status"], "failed")
+        self.assertTrue(report["normalization_attempted"])
+        self.assertTrue(report["normalization_applied"])
+        self.assertEqual(report["normalization_kind"], "markdown_fence_stripped")
+        self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertEqual(report["schema_validation_status"], "passed")
+        self.assertTrue(report["candidate_valid"])
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_normalized_parse_passed")
+
+    def test_backend_smoke_reports_normalized_absolute_path_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_module = fake_transformers_module(
+                "```json\n" + valid_candidate_json(path=os.path.join(td, "backend_smoke_target.py")) + "\n```"
+            )
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                ):
+                    report = backend_smoke_report(workspace_root=td)
+
+        self.assertEqual(report["generation_status"], "passed")
+        self.assertTrue(report["normalization_applied"])
+        self.assertEqual(report["structured_output_parse_status"], "passed")
+        self.assertEqual(report["schema_validation_status"], "failed")
+        self.assertTrue(report["unsafe_path_detected"])
+        self.assertFalse(report["candidate_valid"])
+        self.assertEqual(report["smoke_level"], "model_loaded_generation_succeeded_normalized_schema_failed")
 
     def test_chat_template_is_used_when_available_without_weakening_schema(self):
         seen_prompts = []

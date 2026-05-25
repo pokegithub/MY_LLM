@@ -47,7 +47,7 @@
   },
   "rejected_cases": [
     "plain_prose",
-    "markdown_wrapped_json",
+    "markdown_wrapped_json_outside_output_normalization_policy",
     "partial_json",
     "missing_required_fields",
     "empty_required_fields",
@@ -63,6 +63,14 @@
     "logged": true,
     "success_requires_schema_validation": true,
     "quality_claim": "none"
+  },
+  "output_normalization_policy": {
+    "schema": "output_normalization_policy_v1",
+    "allowed_case": "single_outer_markdown_json_fence",
+    "normalization_kind": "markdown_fence_stripped",
+    "logged": true,
+    "absolute_path_conversion_implemented": false,
+    "success_requires_schema_validation": true
   },
   "verifier_authority": "required_for_correctness",
   "proves_real_coding_ability": false,

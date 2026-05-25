@@ -9,6 +9,7 @@ Usage:
   python run.py agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
   python run.py agent-backend-provision-small-candidate Provision a small instruction smoke candidate
   python run.py candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
+  python run.py hidden-eval-seed-run Run a narrow private hidden-eval seed subset
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -165,6 +166,7 @@ def check_dependencies(command: str):
         "agent-backend-provision-tiny-model": {},
         "agent-backend-provision-small-candidate": {},
         "candidate-readiness-smoke": {},
+        "hidden-eval-seed-run": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -559,8 +561,14 @@ def run_agent_backend_smoke(args):
     print(f"  contract_version  : {payload.get('structured_contract_version')}")
     print(f"  attempts          : {payload.get('generation_attempts')}")
     print(f"  malformed_retries : {payload.get('malformed_retry_count')}")
+    print(f"  raw_parse_status  : {payload.get('raw_parse_status')}")
+    print(f"  normalization     : attempted={str(payload.get('normalization_attempted')).lower()} applied={str(payload.get('normalization_applied')).lower()}")
+    if payload.get("normalization_kind"):
+        print(f"  normalization_kind: {payload.get('normalization_kind')}")
+    if payload.get("normalization_rejected_reason"):
+        print(f"  norm_rejected     : {payload.get('normalization_rejected_reason')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
-    print(f"  schema_status     : {payload.get('final_schema_validation_status')}")
+    print(f"  schema_status     : {payload.get('schema_validation_status') or payload.get('final_schema_validation_status')}")
     print(f"  candidate_valid   : {str(payload.get('structured_candidate_valid')).lower()}")
     print(f"  unsafe_path       : {str(payload.get('unsafe_path_detected')).lower()}")
     print(f"  candidate_status  : {payload.get('tiny_candidate_generation_status')}")
@@ -676,6 +684,44 @@ def run_candidate_readiness_smoke(args):
     print(f"  proves_quality    : {str(payload.get('proves_model_quality')).lower()}")
     print(f"  winner_claim      : {payload.get('bakeoff_winner_claim')}")
     print(f"  quality_claim     : {payload.get('quality_claim')}")
+    print("=" * 60)
+
+
+def run_hidden_eval_seed_run(args):
+    from eval_harness.hidden_seed_runner import run_hidden_eval_seed_execution
+
+    payload = run_hidden_eval_seed_execution(
+        seed_ids=tuple(args.hidden_eval_seed_id or ()) or None,
+        workspace_root=".",
+        backend_config_path=args.hidden_eval_backend_config,
+        backend_script_path=args.backend_script,
+    )
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    counts = payload.get("counts") or {}
+    print("\n" + "=" * 60)
+    print("HIDDEN EVAL SEED RUN")
+    print("=" * 60)
+    print(f"  run_id              : {payload.get('run_id')}")
+    print(f"  seed_total          : {payload.get('seed_count_total')}")
+    print(f"  attempted           : {counts.get('total_attempted')}")
+    print(f"  passed              : {counts.get('passed')}")
+    print(f"  failed              : {counts.get('failed')}")
+    print(f"  blocked             : {counts.get('blocked')}")
+    print(f"  unsupported         : {counts.get('unsupported')}")
+    print(f"  exact_tool_routed   : {counts.get('exact_tool_routed')}")
+    print(f"  backend_routed      : {counts.get('backend_routed')}")
+    print(f"  verifier_reached    : {counts.get('verifier_reached')}")
+    print(f"  verifier_passed     : {counts.get('verifier_passed')}")
+    print(f"  backend_kind        : {payload.get('backend_kind')}")
+    print(f"  model_id_or_path    : {payload.get('model_id_or_path')}")
+    print(f"  private_leakage     : {str(payload.get('private_target_leakage')).lower()}")
+    print(f"  quality_claim       : {payload.get('quality_claim')}")
+    print(f"  report_path         : {payload.get('summary_report_path')}")
     print("=" * 60)
 
 
@@ -1815,6 +1861,7 @@ Commands:
   agent-backend-provision-tiny-model Explicitly download a smoke-only tiny backend model
   agent-backend-provision-small-candidate Provision a small instruction smoke candidate
   candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
+  hidden-eval-seed-run Run a narrow private hidden-eval seed subset
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1860,6 +1907,7 @@ Commands:
             "agent-backend-provision-tiny-model",
             "agent-backend-provision-small-candidate",
             "candidate-readiness-smoke",
+            "hidden-eval-seed-run",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -1969,6 +2017,17 @@ Commands:
         help="Candidate shortlist JSON path for candidate-readiness-smoke.",
     )
     parser.add_argument(
+        "--hidden-eval-seed-id",
+        action="append",
+        default=[],
+        help="Specific hidden eval seed id for hidden-eval-seed-run. Can be repeated.",
+    )
+    parser.add_argument(
+        "--hidden-eval-backend-config",
+        default="./configs/backend_smoke_qwen2_5_coder_0_5b.json",
+        help="Backend config used for coding items in hidden-eval-seed-run.",
+    )
+    parser.add_argument(
         "--run-id",
         default=None,
         help="Run identifier for trajectory-show.",
@@ -2036,6 +2095,7 @@ Commands:
         "agent-backend-provision-tiny-model": lambda: run_agent_backend_provision_tiny_model(args),
         "agent-backend-provision-small-candidate": lambda: run_agent_backend_provision_small_candidate(args),
         "candidate-readiness-smoke": lambda: run_candidate_readiness_smoke(args),
+        "hidden-eval-seed-run": lambda: run_hidden_eval_seed_run(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),

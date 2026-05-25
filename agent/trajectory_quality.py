@@ -48,6 +48,10 @@ FIXTURE_MARKERS = (
     "test_agent_phase2_workspaces",
     "test_agent_phase3_workspaces",
     "test_agent_phase4_workspaces",
+    "run_artifacts/qwen_tiny_solve_workspace",
+    "run_artifacts/hidden_eval_runs",
+    "backend_smoke_target.py",
+    "candidate_readiness_",
 )
 
 

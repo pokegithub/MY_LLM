@@ -1,0 +1,57 @@
+{
+  "schema": "output_normalization_policy_v1",
+  "applies_to": [
+    "local_transformers_in_process"
+  ],
+  "allowed_normalization_cases": [
+    {
+      "case": "single_outer_markdown_json_fence",
+      "conditions": [
+        "exactly_one_outer_fenced_block",
+        "no_prose_before_or_after_except_whitespace",
+        "language_tag_empty_or_json",
+        "fenced_content_is_pure_json",
+        "same_structured_candidate_contract_validation_after_normalization"
+      ],
+      "normalization_kind": "markdown_fence_stripped"
+    }
+  ],
+  "rejected_normalization_cases": [
+    "prose_before_or_after_fenced_json",
+    "multiple_fenced_blocks",
+    "nested_or_inner_markdown_fence",
+    "partial_json",
+    "fenced_non_json",
+    "markdown_list_containing_json",
+    "json_mixed_with_explanation",
+    "missing_required_fields",
+    "empty_edits",
+    "empty_new_content",
+    "unsafe_paths"
+  ],
+  "logging_required": [
+    "raw_parse_status",
+    "normalization_attempted",
+    "normalization_applied",
+    "normalization_kind",
+    "normalization_reason",
+    "normalization_rejected_reason",
+    "final_parse_status",
+    "schema_validation_status",
+    "unsafe_path_detected"
+  ],
+  "path_handling": {
+    "relative_paths_preferred": true,
+    "absolute_paths_rejected_by_default": true,
+    "absolute_to_relative_conversion_implemented": false,
+    "parent_traversal_allowed": false,
+    "safe_path_validation_required_after_normalization": true
+  },
+  "truth_limits": {
+    "normalized_json_is_originally_compliant": false,
+    "schema_valid_output_is_code_correctness": false,
+    "tiny_fixture_success_is_general_coding_ability": false,
+    "bakeoff_evidence": false,
+    "quality_claim": "none"
+  }
+}

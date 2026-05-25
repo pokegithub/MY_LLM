@@ -4,7 +4,7 @@ This contract defines the only backend-generated candidate format accepted by th
 
 ## Required Output
 
-Backends must return exactly one JSON object, with no markdown fence, prose, comments, or partial JSON:
+Backends must return exactly one JSON object, with no markdown fence, prose, comments, or partial JSON. `output_normalization_policy_v1` may strip one outer markdown JSON fence before validation, but that is logged as normalization and is not considered originally compliant output:
 
 ```json
 {
@@ -38,13 +38,24 @@ Optional field:
 ## Rejected Cases
 
 - plain prose
-- markdown-wrapped JSON
+- markdown-wrapped JSON outside the narrow `output_normalization_policy_v1`
 - partial JSON
 - missing required fields
 - empty `candidate_id`, `summary`, `edits`, or `new_content`
 - absolute paths
 - parent traversal such as `../file.py`
 - output that cannot validate into the existing `Candidate` and `FileEdit` types
+
+## Output Normalization
+
+`output_normalization_policy_v1` allows only one normalization case: exactly one
+outer markdown fence with optional `json` language tag and no prose outside the
+fence. The fenced body must be pure JSON and must pass this same contract after
+the fence is stripped. Prose, multiple fences, partial JSON, unsafe paths, and
+empty edits remain rejected.
+
+Absolute path conversion is not implemented. Absolute paths remain rejected by
+default even when markdown-fence normalization succeeds.
 
 ## Malformed-Output Retry Policy
 

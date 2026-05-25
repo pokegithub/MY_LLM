@@ -71,6 +71,15 @@ Allowed for deterministic exact-tool traces only. These may teach routing or exa
 
 Test-harness or fixture traces are useful for testing orchestration. They are not positive training data.
 
+Backend smoke fixtures, candidate-readiness smoke workspaces, and tiny verifier
+targets such as `backend_smoke_target.py` are fixture-only even when a real
+backend reaches a verifier pass. They prove integration reachability, not
+general coding quality.
+
+Private hidden-eval seed workspaces under `run_artifacts/hidden_eval_runs/`
+are also fixture/holdout material. They may provide evaluation evidence, but
+they must not become SFT-positive training demonstrations.
+
 ### Backendless blocked
 
 No-backend coding traces are useful as blocked-state evidence only. They are not model-solution demonstrations.
