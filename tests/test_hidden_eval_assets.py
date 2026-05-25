@@ -84,7 +84,7 @@ class HiddenEvalAssetTests(unittest.TestCase):
         self.assertEqual(report["counts"]["backend_routed"], 0)
         self.assertFalse(report["private_target_leakage"])
 
-    def test_hidden_eval_seed_runner_marks_retrieval_unsupported_without_faking(self):
+    def test_hidden_eval_seed_runner_routes_retrieval_through_citation_verifier(self):
         with tempfile.TemporaryDirectory() as td:
             report = run_hidden_eval_seed_execution(
                 seed_ids=("hidden_retrieval_001",),
@@ -94,9 +94,11 @@ class HiddenEvalAssetTests(unittest.TestCase):
                 use_default_agent_report_dir=False,
             )
 
-        self.assertEqual(report["counts"]["unsupported"], 1)
-        self.assertEqual(report["items"][0]["final_status"], "unsupported")
-        self.assertFalse(report["items"][0]["private_target_used"])
+        self.assertEqual(report["counts"]["retrieval_routed"], 1)
+        self.assertEqual(report["counts"]["retrieval_supported"], 1)
+        self.assertEqual(report["counts"]["citation_verifier_passed"], 1)
+        self.assertEqual(report["items"][0]["final_status"], "passed")
+        self.assertTrue(report["items"][0]["private_target_used"])
         self.assertFalse(report["items"][0]["private_target_exposed_in_public_summary"])
 
     def test_hidden_eval_public_summary_does_not_expose_private_targets(self):

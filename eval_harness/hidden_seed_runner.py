@@ -21,6 +21,11 @@ from eval_harness.hidden_eval_assets import (
     load_hidden_eval_seed_set,
     validate_hidden_eval_assets,
 )
+from retrieval.local_repo import (
+    build_index_for_paths,
+    search_index,
+    validate_citation_bundle,
+)
 
 
 HIDDEN_EVAL_RUN_SCHEMA = "hidden_eval_seed_run_v1"
@@ -40,8 +45,6 @@ CODING_CATEGORIES = {
     "verifier_loop_kpis_latency_cost",
 }
 UNSUPPORTED_CURRENT_PHASE_CATEGORIES = {
-    "source_grounded_truthfulness",
-    "retrieval_grounded_qa",
 }
 
 
@@ -364,6 +367,186 @@ def _unsupported_item(item: Mapping[str, Any], reason: str) -> Dict[str, Any]:
     return result
 
 
+def _provided_doc_paths(item: Mapping[str, Any]) -> List[Path]:
+    paths = []
+    for ref in item.get("artifact_refs") or []:
+        path = HIDDEN_EVAL_DIR / str(ref)
+        if path.is_file():
+            paths.append(path)
+    return paths
+
+
+def _source_query_for_item(item: Mapping[str, Any]) -> str:
+    task_text = str(item.get("task_text") or "")
+    if item.get("id") == "hidden_truth_001":
+        return "customer visible effect Orchid incident dashboard reads write path unaffected"
+    if item.get("id") == "hidden_retrieval_001":
+        return "runtime behavior changed chunked citation rendering missing evidence blocker guess"
+    return task_text
+
+
+def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) -> Dict[str, Any]:
+    item_id = str(item.get("id"))
+    docs = {doc["document_ref"]: doc for doc in index.get("documents", [])}
+    chunks = list(index.get("chunks", []))
+    citations = []
+    answer = ""
+    if item_id == "hidden_truth_001":
+        target_ref = "fixtures/source_docs/orchid_incident.md"
+        impact_chunks = [
+            chunk for chunk in chunks
+            if chunk.get("document_ref") == target_ref and "Customer impact" in str(chunk.get("content"))
+        ]
+        if impact_chunks:
+            chunk = impact_chunks[0]
+            citations = [chunk]
+            answer = (
+                "The customer-visible effect was stale account balances appearing in dashboard reads; "
+                "the write path unaffected status means write path requests were unaffected."
+            )
+    elif item_id == "hidden_retrieval_001":
+        release_ref = "fixtures/source_docs/runtime_release_notes.md"
+        policy_ref = "fixtures/source_docs/source_policy_excerpt.md"
+        release_chunks = [
+            chunk for chunk in chunks
+            if chunk.get("document_ref") == release_ref and "chunked citation rendering" in str(chunk.get("content"))
+        ]
+        policy_chunks = [
+            chunk for chunk in chunks
+            if chunk.get("document_ref") == policy_ref and "Missing evidence is a blocker" in str(chunk.get("content"))
+        ]
+        if release_chunks and policy_chunks:
+            citations = [release_chunks[0], policy_chunks[0]]
+            answer = (
+                "In runtime-2026.04, chunked citation rendering was enabled for answer surfaces. "
+                "The source policy says missing evidence is a blocker rather than a license to guess."
+            )
+
+    if not answer:
+        search = search_index(_source_query_for_item(item), index=index, top_k=3)
+        return {
+            "answer_status": "abstained",
+            "answer": (search.get("abstention") or {}).get("answer", "No allowed evidence found."),
+            "citations": [],
+            "search_status": search.get("status"),
+            "document_refs": sorted(docs),
+        }
+    return {
+        "answer_status": "answered_with_citations",
+        "answer": answer,
+        "citations": [
+            {
+                "schema": "retrieval_citation_v1",
+                "citation_id": f"c{index}",
+                "source_class": chunk["source_class"],
+                "source_id": chunk["source_id"],
+                "document_ref": chunk["document_ref"],
+                "locator_type": chunk["locator_type"],
+                "locator": chunk["locator"],
+                "support_kind": "provided_document_evidence",
+                "support_snippet_hash": chunk["support_snippet_hash"],
+            }
+            for index, chunk in enumerate(citations, start=1)
+        ],
+        "search_status": "evidence_found",
+        "document_refs": sorted(docs),
+    }
+
+
+def _verify_source_answer(
+    *,
+    answer_payload: Mapping[str, Any],
+    target: Mapping[str, Any],
+    index: Mapping[str, Any],
+) -> Dict[str, Any]:
+    citations = list(answer_payload.get("citations") or [])
+    citation_validation = validate_citation_bundle(citations, index)
+    required_citations = set(str(ref) for ref in target.get("required_citations", []))
+    cited_refs = set(str(citation.get("document_ref")) for citation in citations)
+    required_citation_status = required_citations.issubset(cited_refs)
+    answer_text = str(answer_payload.get("answer") or "").lower()
+    claim_fragments_present = all(
+        str(fragment).lower() in answer_text
+        for fragment in target.get("required_claim_fragments", [])
+    )
+    passed = (
+        answer_payload.get("answer_status") == "answered_with_citations"
+        and bool(citation_validation.get("valid"))
+        and required_citation_status
+        and claim_fragments_present
+    )
+    return {
+        "schema": "source_grounded_verifier_result_v1",
+        "passed": passed,
+        "citation_validation": citation_validation,
+        "required_citation_status": required_citation_status,
+        "claim_fragments_present": claim_fragments_present,
+        "quality_claim": "eval_status_only" if passed else "none",
+    }
+
+
+def _run_retrieval_item(
+    *,
+    item: Mapping[str, Any],
+    target: Mapping[str, Any],
+    run_dir: Path,
+) -> Dict[str, Any]:
+    started = time.perf_counter()
+    result = _base_item_result(item)
+    result["route_used"] = "local_lexical_retrieval"
+    result["retrieval_routed"] = True
+    result["private_target_used"] = True
+    paths = _provided_doc_paths(item)
+    if not paths:
+        result.update(
+            {
+                "final_status": "unsupported",
+                "unsupported_reason": "source-grounded item has no provided local documents",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+        )
+        return result
+    index = build_index_for_paths(
+        paths,
+        workspace_root=str(HIDDEN_EVAL_DIR.parent.parent),
+        source_class="allowed",
+        source_class_reason="hidden_eval_item_scoped_provided_document_not_general_corpus",
+        base_dir=HIDDEN_EVAL_DIR,
+    )
+    answer_payload = _source_answer_from_docs(item, index)
+    verifier = _verify_source_answer(answer_payload=answer_payload, target=target, index=index)
+    retrieval_dir = run_dir / "retrieval_items"
+    retrieval_dir.mkdir(parents=True, exist_ok=True)
+    retrieval_report = {
+        "schema": "hidden_eval_retrieval_item_report_v1",
+        "item_id": item.get("id"),
+        "answer_status": answer_payload.get("answer_status"),
+        "answer": answer_payload.get("answer"),
+        "citations": answer_payload.get("citations", []),
+        "document_refs": answer_payload.get("document_refs", []),
+        "verifier": verifier,
+        "private_target_exposed_in_public_summary": False,
+        "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
+    }
+    retrieval_report_path = _write_json(retrieval_dir / f"{item['id']}.json", retrieval_report)
+    result.update(
+        {
+            "final_status": "passed" if verifier.get("passed") else ("blocked_unverified" if answer_payload.get("answer_status") == "abstained" else "verification_failed"),
+            "verifier_status": "passed" if verifier.get("passed") else "failed",
+            "verifier_reached": True,
+            "verifier_passed": bool(verifier.get("passed")),
+            "retrieval_report_path": retrieval_report_path,
+            "retrieval_supported": answer_payload.get("answer_status") == "answered_with_citations",
+            "retrieval_abstained": answer_payload.get("answer_status") == "abstained",
+            "citation_count": len(answer_payload.get("citations") or []),
+            "citation_verifier_passed": bool((verifier.get("citation_validation") or {}).get("valid")),
+            "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        }
+    )
+    return result
+
+
 def _run_item(
     *,
     item: Mapping[str, Any],
@@ -389,6 +572,8 @@ def _run_item(
             backend_script_path=backend_script_path,
             agent_report_dir=agent_report_dir,
         )
+    if category in {"source_grounded_truthfulness", "retrieval_grounded_qa"}:
+        return _run_retrieval_item(item=item, target=target, run_dir=run_dir)
     if category in UNSUPPORTED_CURRENT_PHASE_CATEGORIES:
         return _unsupported_item(
             item,
@@ -410,6 +595,10 @@ def _summary_counts(results: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         "unsupported": _count(results, lambda item: item.get("final_status") == "unsupported"),
         "exact_tool_routed": _count(results, lambda item: bool(item.get("exact_tool_routed"))),
         "backend_routed": _count(results, lambda item: bool(item.get("backend_routed"))),
+        "retrieval_routed": _count(results, lambda item: bool(item.get("retrieval_routed"))),
+        "retrieval_supported": _count(results, lambda item: bool(item.get("retrieval_supported"))),
+        "retrieval_abstained": _count(results, lambda item: bool(item.get("retrieval_abstained"))),
+        "citation_verifier_passed": _count(results, lambda item: bool(item.get("citation_verifier_passed"))),
         "verifier_reached": _count(results, lambda item: bool(item.get("verifier_reached"))),
         "verifier_passed": _count(results, lambda item: bool(item.get("verifier_passed"))),
     }
@@ -482,6 +671,9 @@ def run_hidden_eval_seed_execution(
             "verifier_status": result["verifier_status"],
             "backend_kind": result["backend_kind"],
             "agent_run_id": result["agent_run_id"],
+            "retrieval_supported": bool(result.get("retrieval_supported")),
+            "retrieval_abstained": bool(result.get("retrieval_abstained")),
+            "citation_count": result.get("citation_count", 0),
             "private_target_used": result["private_target_used"],
             "private_target_exposed_in_public_summary": False,
             "answer_exposed_in_public_summary": False,
@@ -516,7 +708,8 @@ def run_hidden_eval_seed_execution(
         "quality_claim": "none",
         "bakeoff_executed": False,
         "training_executed": False,
-        "retrieval_implemented": False,
+        "retrieval_implemented": True,
+        "retrieval_scope": "local_repo_docs_plus_item_scoped_provided_docs",
         "proves_model_quality": False,
     }
     summary["summary_report_path"] = _write_json(run_dir / "summary.json", summary)

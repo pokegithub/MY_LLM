@@ -230,6 +230,21 @@
 - Hidden-eval seed runs can be pointed at model-specific backend configs. Exact tasks still bypass the backend, and retrieval/source-grounded hidden items remain unsupported until retrieval/citation implementation exists.
 - Small-model comparison reports are non-leaderboard status summaries only: no winner is selected, no bakeoff is executed, and verifier reachability on a tiny hidden subset is not proof of general coding ability.
 
+### Phase A local retrieval/citation MVP update
+
+- Date: 2026-05-25
+- Scope: Shifted the RTX 2050 path from further small-model escalation to a local lexical retrieval/citation MVP. This is not Phase B, not training, not web retrieval, not vector search, and not a memory system.
+- `model_selection/local_small_model_stop_go_memo_v1.md` records the stop/go decision: Qwen2.5-Coder 0.5B and 1.5B did not pass backend-routed hidden coding verifier items, SFT-positive eligibility remains zero, and 3B/7B/14B are not the next local RTX 2050 step.
+- `retrieval/local_repo.py` builds a deterministic lexical index for approved repo-authored docs/manifests only. It excludes hidden private targets, hidden fixtures from the normal corpus, downloaded corpora, model/checkpoint folders, caches, and run artifacts.
+- New CLI commands:
+  - `retrieval-index-build`
+  - `retrieval-search --query "..."`
+  - `retrieval-citation-check`
+- Citations follow a checkable object shape with source id, document ref, locator type, locator, support kind, and support snippet hash. Citation validation checks required fields, source policy, locator resolution, and snippet hash.
+- Missing or out-of-scope evidence produces abstention/need-source behavior rather than unsupported answers.
+- Hidden source-grounded and retrieval-grounded seed items can now run only against item-scoped provided documents; those docs are not added to the normal repo-doc retrieval corpus. Public summaries still do not expose private targets or answer keys.
+- Citation presence/resolution is verifier evidence only. Citation validity does not prove broad truth, model intelligence, or model quality.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth

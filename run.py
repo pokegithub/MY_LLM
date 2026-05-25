@@ -10,6 +10,9 @@ Usage:
   python run.py agent-backend-provision-small-candidate Provision a small instruction smoke candidate
   python run.py candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
   python run.py hidden-eval-seed-run Run a narrow private hidden-eval seed subset
+  python run.py retrieval-index-build Build the local repo-doc retrieval index
+  python run.py retrieval-search Search the local repo-doc retrieval index
+  python run.py retrieval-citation-check Validate citations from a local retrieval search
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -167,6 +170,9 @@ def check_dependencies(command: str):
         "agent-backend-provision-small-candidate": {},
         "candidate-readiness-smoke": {},
         "hidden-eval-seed-run": {},
+        "retrieval-index-build": {},
+        "retrieval-search": {},
+        "retrieval-citation-check": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -522,6 +528,8 @@ def _validate_trajectory_args(args):
         raise ValueError("trajectory-show requires --run-id")
     if args.command == "trajectory-search" and not (args.query or "").strip():
         raise ValueError("trajectory-search requires --query")
+    if args.command == "retrieval-search" and not (args.query or "").strip():
+        raise ValueError("retrieval-search requires --query")
 
 
 def run_agent_verify(args):
@@ -715,6 +723,10 @@ def run_hidden_eval_seed_run(args):
     print(f"  unsupported         : {counts.get('unsupported')}")
     print(f"  exact_tool_routed   : {counts.get('exact_tool_routed')}")
     print(f"  backend_routed      : {counts.get('backend_routed')}")
+    print(f"  retrieval_routed    : {counts.get('retrieval_routed')}")
+    print(f"  retrieval_supported : {counts.get('retrieval_supported')}")
+    print(f"  retrieval_abstained : {counts.get('retrieval_abstained')}")
+    print(f"  citation_passed     : {counts.get('citation_verifier_passed')}")
     print(f"  verifier_reached    : {counts.get('verifier_reached')}")
     print(f"  verifier_passed     : {counts.get('verifier_passed')}")
     print(f"  backend_kind        : {payload.get('backend_kind')}")
@@ -722,6 +734,110 @@ def run_hidden_eval_seed_run(args):
     print(f"  private_leakage     : {str(payload.get('private_target_leakage')).lower()}")
     print(f"  quality_claim       : {payload.get('quality_claim')}")
     print(f"  report_path         : {payload.get('summary_report_path')}")
+    print("=" * 60)
+
+
+def run_retrieval_index_build(args):
+    from retrieval.local_repo import build_local_repo_docs_index
+
+    payload = build_local_repo_docs_index(
+        workspace_root=".",
+        output_path=args.retrieval_index_path,
+    )
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    skip_reasons = {}
+    for item in payload.get("skip_report", []):
+        reason = item.get("skip_reason") or "unknown"
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+    print("\n" + "=" * 60)
+    print("RETRIEVAL INDEX BUILD")
+    print("=" * 60)
+    print(f"  index_path       : {payload.get('index_path')}")
+    print(f"  documents        : {len(payload.get('documents', []))}")
+    print(f"  chunks           : {len(payload.get('chunks', []))}")
+    print(f"  skipped          : {len(payload.get('skip_report', []))}")
+    print(f"  hidden_private   : excluded")
+    print(f"  hidden_fixtures  : excluded from normal corpus")
+    print(f"  mode             : {payload.get('retrieval_mode')}")
+    print(f"  proves_truth     : {str(payload.get('proves_truth')).lower()}")
+    print(f"  quality_claim    : {payload.get('quality_claim')}")
+    if skip_reasons:
+        for reason, count in sorted(skip_reasons.items())[:8]:
+            print(f"  skip_reason      : {reason} ({count})")
+    print("=" * 60)
+
+
+def run_retrieval_search(args):
+    from retrieval.local_repo import search_index
+
+    if not args.query:
+        raise ValueError("retrieval-search requires --query")
+    payload = search_index(
+        args.query,
+        index_path=args.retrieval_index_path,
+        workspace_root=".",
+        top_k=args.limit,
+    )
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("RETRIEVAL SEARCH")
+    print("=" * 60)
+    print(f"  query         : {payload.get('query')}")
+    print(f"  status        : {payload.get('status')}")
+    print(f"  matches       : {len(payload.get('matches', []))}")
+    print(f"  quality_claim : {payload.get('quality_claim')}")
+    for match in payload.get("matches", [])[: args.limit]:
+        citation = match.get("citation") or {}
+        print(
+            "  - "
+            f"{match.get('document_ref')} "
+            f"{match.get('locator_type')}={match.get('locator')} "
+            f"score={match.get('score')}"
+        )
+        print(f"    citation_id : {citation.get('citation_id')}")
+        print(f"    source_id   : {citation.get('source_id')}")
+        print(f"    snippet_hash: {citation.get('support_snippet_hash')}")
+    if payload.get("abstention"):
+        print(f"  abstention    : {(payload.get('abstention') or {}).get('reason')}")
+    print("=" * 60)
+
+
+def run_retrieval_citation_check(args):
+    from retrieval.local_repo import citation_check_for_query
+
+    query = args.query or "backend failure contract"
+    payload = citation_check_for_query(
+        query,
+        index_path=args.retrieval_index_path,
+        workspace_root=".",
+    )
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    validation = payload.get("citation_validation") or {}
+    print("\n" + "=" * 60)
+    print("RETRIEVAL CITATION CHECK")
+    print("=" * 60)
+    print(f"  query          : {payload.get('query')}")
+    print(f"  search_status  : {payload.get('search_status')}")
+    print(f"  citation_count : {validation.get('citation_count')}")
+    print(f"  valid          : {str(validation.get('valid')).lower()}")
+    if validation.get("failure_reason"):
+        print(f"  failure_reason : {validation.get('failure_reason')}")
+    print(f"  quality_claim  : {payload.get('quality_claim')}")
     print("=" * 60)
 
 
@@ -1862,6 +1978,9 @@ Commands:
   agent-backend-provision-small-candidate Provision a small instruction smoke candidate
   candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
   hidden-eval-seed-run Run a narrow private hidden-eval seed subset
+  retrieval-index-build Build the local repo-doc retrieval index
+  retrieval-search Search the local repo-doc retrieval index
+  retrieval-citation-check Validate citations from a local retrieval search
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1908,6 +2027,9 @@ Commands:
             "agent-backend-provision-small-candidate",
             "candidate-readiness-smoke",
             "hidden-eval-seed-run",
+            "retrieval-index-build",
+            "retrieval-search",
+            "retrieval-citation-check",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -2035,7 +2157,12 @@ Commands:
     parser.add_argument(
         "--query",
         default=None,
-        help="Keyword query for trajectory-search.",
+        help="Keyword query for trajectory-search or retrieval-search.",
+    )
+    parser.add_argument(
+        "--retrieval-index-path",
+        default="./run_artifacts/retrieval_index/local_repo_docs_index_v1.json",
+        help="Local repo-doc retrieval index path.",
     )
     parser.add_argument(
         "--route-filter",
@@ -2096,6 +2223,9 @@ Commands:
         "agent-backend-provision-small-candidate": lambda: run_agent_backend_provision_small_candidate(args),
         "candidate-readiness-smoke": lambda: run_candidate_readiness_smoke(args),
         "hidden-eval-seed-run": lambda: run_hidden_eval_seed_run(args),
+        "retrieval-index-build": lambda: run_retrieval_index_build(args),
+        "retrieval-search": lambda: run_retrieval_search(args),
+        "retrieval-citation-check": lambda: run_retrieval_citation_check(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),
