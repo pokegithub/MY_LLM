@@ -13,6 +13,7 @@ Usage:
   python run.py retrieval-index-build Build the local repo-doc retrieval index
   python run.py retrieval-search Search the local repo-doc retrieval index
   python run.py retrieval-citation-check Validate citations from a local retrieval search
+  python run.py retrieval-answer Build a cautious cited local repo-doc answer or abstain
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -28,6 +29,7 @@ Usage:
   python run.py token-manifest Reconstruct token artifact manifest from local cache
   python run.py token-integrity Inspect token artifact integrity metadata
   python run.py deps           Check declared dependency environment
+  python run.py compile-source Compile tracked source-like Python files only
   python run.py hardware-validate Report current-machine hardware validation evidence
   python run.py gpu-fit-validate Report bounded 4GB GPU fit evidence
   python run.py data-governance Report source/license, dedup, and benchmark-risk evidence
@@ -173,6 +175,7 @@ def check_dependencies(command: str):
         "retrieval-index-build": {},
         "retrieval-search": {},
         "retrieval-citation-check": {},
+        "retrieval-answer": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -187,6 +190,7 @@ def check_dependencies(command: str):
         "token-manifest": {"numpy": "numpy", "tokenizers": "tokenizers"},
         "token-integrity": {"numpy": "numpy"},
         "deps": {},
+        "compile-source": {},
         "hardware-validate": {"torch": "torch"},
         "gpu-fit-validate": {"torch": "torch", "numpy": "numpy", "tokenizers": "tokenizers"},
         "data-governance": {"numpy": "numpy"},
@@ -449,6 +453,85 @@ def run_deps():
     print("\nDEPENDENCY CHECK PASSED")
 
 
+def run_compile_source():
+    """Compile tracked source-like Python files without scanning generated artifact roots."""
+    skipped_roots = [
+        ".venv",
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        "run_artifacts",
+        "data_cache",
+        "tokenizer_data",
+        "checkpoints",
+        "sft_checkpoints",
+        "dpo_checkpoints",
+        "distill_checkpoints",
+        "improved_checkpoints",
+        "quantized",
+        "eval_results",
+    ]
+    result = subprocess.run(
+        ["git", "ls-files", "*.py"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        print("ERROR: git ls-files failed")
+        if result.stderr:
+            print(result.stderr.strip())
+        sys.exit(1)
+
+    tracked_paths = [
+        item.strip()
+        for item in result.stdout.splitlines()
+        if item.strip()
+    ]
+    scanned = []
+    skipped = []
+    failures = []
+    for rel_path in tracked_paths:
+        normalized = rel_path.replace("\\", "/")
+        if any(
+            normalized == root or normalized.startswith(root.rstrip("/") + "/")
+            for root in skipped_roots
+        ):
+            skipped.append(normalized)
+            continue
+        try:
+            with open(rel_path, "rb") as handle:
+                compile(handle.read(), rel_path, "exec")
+            scanned.append(normalized)
+        except Exception as exc:
+            failures.append({"path": normalized, "error": str(exc)})
+
+    payload = {
+        "schema": "source_compile_report_v1",
+        "ok": not failures,
+        "scanned_count": len(scanned),
+        "skipped_count": len(skipped),
+        "skipped_generated_roots": skipped_roots,
+        "failures": failures,
+        "behavior_changed": False,
+    }
+    if OUTPUT_JSON:
+        _emit_json(payload)
+    else:
+        print("\n" + "=" * 60)
+        print("SOURCE COMPILE")
+        print("=" * 60)
+        print(f"  scanned       : {payload['scanned_count']}")
+        print(f"  skipped       : {payload['skipped_count']}")
+        print(f"  skipped_roots : {', '.join(skipped_roots)}")
+        print(f"  ok            : {str(payload['ok']).lower()}")
+        for failure in failures[:10]:
+            print(f"  failure       : {failure['path']} :: {failure['error']}")
+        print("=" * 60)
+    if failures:
+        sys.exit(1)
+
+
 def _load_task_text(task: str | None, task_file: str | None) -> str:
     if task and task_file:
         raise ValueError("provide either --task or --task-file, not both")
@@ -530,6 +613,8 @@ def _validate_trajectory_args(args):
         raise ValueError("trajectory-search requires --query")
     if args.command == "retrieval-search" and not (args.query or "").strip():
         raise ValueError("retrieval-search requires --query")
+    if args.command == "retrieval-answer" and not (args.query or "").strip():
+        raise ValueError("retrieval-answer requires --query")
 
 
 def run_agent_verify(args):
@@ -727,6 +812,7 @@ def run_hidden_eval_seed_run(args):
     print(f"  retrieval_supported : {counts.get('retrieval_supported')}")
     print(f"  retrieval_abstained : {counts.get('retrieval_abstained')}")
     print(f"  citation_passed     : {counts.get('citation_verifier_passed')}")
+    print(f"  answer_passed       : {counts.get('answer_verifier_passed')}")
     print(f"  verifier_reached    : {counts.get('verifier_reached')}")
     print(f"  verifier_passed     : {counts.get('verifier_passed')}")
     print(f"  backend_kind        : {payload.get('backend_kind')}")
@@ -837,6 +923,54 @@ def run_retrieval_citation_check(args):
     print(f"  valid          : {str(validation.get('valid')).lower()}")
     if validation.get("failure_reason"):
         print(f"  failure_reason : {validation.get('failure_reason')}")
+    print(f"  quality_claim  : {payload.get('quality_claim')}")
+    print("=" * 60)
+
+
+def run_retrieval_answer(args):
+    from retrieval.local_repo import assemble_cited_answer, load_index, validate_cited_answer
+
+    if not args.query:
+        raise ValueError("retrieval-answer requires --query")
+    index = load_index(args.retrieval_index_path, workspace_root=".")
+    payload = assemble_cited_answer(
+        args.query,
+        index=index,
+        index_path=args.retrieval_index_path,
+        workspace_root=".",
+        top_k=args.limit,
+    )
+    validation = validate_cited_answer(payload, index)
+    payload["answer_verification"] = validation
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("RETRIEVAL ANSWER")
+    print("=" * 60)
+    print(f"  query          : {payload.get('query')}")
+    print(f"  answer_status  : {payload.get('answer_status')}")
+    if payload.get("answer_text"):
+        print(f"  answer         : {payload.get('answer_text')}")
+    if payload.get("abstention_reason"):
+        print(f"  abstention     : {payload.get('abstention_reason')}")
+    print(f"  citations      : {len(payload.get('citations', []))}")
+    for citation in payload.get("citations", [])[: args.limit]:
+        print(
+            "  - "
+            f"{citation.get('citation_id')} "
+            f"{citation.get('document_ref')} "
+            f"{citation.get('locator_type')}={citation.get('locator')}"
+        )
+    print(f"  verifier_valid : {str(validation.get('valid')).lower()}")
+    if validation.get("failure_reason"):
+        print(f"  failure_reason : {validation.get('failure_reason')}")
+    print(f"  source_policy  : {validation.get('source_policy_status')}")
+    print(f"  support_level  : {validation.get('support_level')}")
+    print(f"  semantic_truth : {validation.get('semantic_truth_claim')}")
     print(f"  quality_claim  : {payload.get('quality_claim')}")
     print("=" * 60)
 
@@ -1981,6 +2115,7 @@ Commands:
   retrieval-index-build Build the local repo-doc retrieval index
   retrieval-search Search the local repo-doc retrieval index
   retrieval-citation-check Validate citations from a local retrieval search
+  retrieval-answer Build a cautious cited local repo-doc answer or abstain
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -1996,6 +2131,7 @@ Commands:
   token-manifest Reconstruct token artifact manifest from local cache
   token-integrity Inspect token artifact integrity metadata
   deps          Check declared dependency environment
+  compile-source Compile tracked source-like Python files only
   hardware-validate Report current-machine hardware validation evidence
   gpu-fit-validate Report bounded 4GB GPU fit evidence
   data-governance Report source/license, dedup, and benchmark-risk evidence
@@ -2030,10 +2166,11 @@ Commands:
             "retrieval-index-build",
             "retrieval-search",
             "retrieval-citation-check",
+            "retrieval-answer",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
-            "token-integrity", "deps", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
+            "token-integrity", "deps", "compile-source", "hardware-validate", "gpu-fit-validate", "data-governance", "validate-real-path",
             "validate-short-run",
             "train-preflight", "deployment-info", "train", "sft", "dpo", "distill", "quantize", "hw-profile", "eval-harness",
             "improve", "eval", "benchmark-harness", "audit", "full", "status",
@@ -2157,7 +2294,7 @@ Commands:
     parser.add_argument(
         "--query",
         default=None,
-        help="Keyword query for trajectory-search or retrieval-search.",
+        help="Keyword query for trajectory-search, retrieval-search, or retrieval-answer.",
     )
     parser.add_argument(
         "--retrieval-index-path",
@@ -2226,6 +2363,7 @@ Commands:
         "retrieval-index-build": lambda: run_retrieval_index_build(args),
         "retrieval-search": lambda: run_retrieval_search(args),
         "retrieval-citation-check": lambda: run_retrieval_citation_check(args),
+        "retrieval-answer": lambda: run_retrieval_answer(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),
@@ -2241,6 +2379,7 @@ Commands:
         "token-manifest": run_token_manifest,
         "token-integrity": run_token_integrity,
         "deps": run_deps,
+        "compile-source": run_compile_source,
         "hardware-validate": run_hardware_validate,
         "gpu-fit-validate": run_gpu_fit_validate,
         "data-governance": run_data_governance,

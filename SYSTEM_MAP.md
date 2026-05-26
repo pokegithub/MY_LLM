@@ -227,7 +227,7 @@
 - `agent-backend-provision-small-candidate` may explicitly provision `Qwen/Qwen2.5-Coder-1.5B-Instruct` to `run_artifacts/local_models/qwen2.5-coder-1.5b-instruct`; unlisted and large 7B/14B model ids remain rejected by the allowlist.
 - `configs/backend_smoke_qwen2_5_coder_1_5b.json` is a local-only backend config for the 1.5B smoke path. It is not enabled by default.
 - The optional Qwen2.5-Coder 3B readiness probe is no-download by default and reports `not_attempted_due_to_hardware_or_policy` when the model is not already local. 3B failure or absence must not block 1.5B evidence.
-- Hidden-eval seed runs can be pointed at model-specific backend configs. Exact tasks still bypass the backend, and retrieval/source-grounded hidden items remain unsupported until retrieval/citation implementation exists.
+- Hidden-eval seed runs can be pointed at model-specific backend configs. Exact tasks still bypass the backend. Retrieval/source-grounded hidden items use only the narrow local retrieval/citation path when item-scoped evidence is available.
 - Small-model comparison reports are non-leaderboard status summaries only: no winner is selected, no bakeoff is executed, and verifier reachability on a tiny hidden subset is not proof of general coding ability.
 
 ### Phase A local retrieval/citation MVP update
@@ -240,10 +240,21 @@
   - `retrieval-index-build`
   - `retrieval-search --query "..."`
   - `retrieval-citation-check`
+  - `retrieval-answer --query "..."`
 - Citations follow a checkable object shape with source id, document ref, locator type, locator, support kind, and support snippet hash. Citation validation checks required fields, source policy, locator resolution, and snippet hash.
 - Missing or out-of-scope evidence produces abstention/need-source behavior rather than unsupported answers.
 - Hidden source-grounded and retrieval-grounded seed items can now run only against item-scoped provided documents; those docs are not added to the normal repo-doc retrieval corpus. Public summaries still do not expose private targets or answer keys.
 - Citation presence/resolution is verifier evidence only. Citation validity does not prove broad truth, model intelligence, or model quality.
+
+### Phase A retrieval answer surface update
+
+- Date: 2026-05-26
+- Scope: Added a deterministic cited-answer surface on top of the local lexical retrieval MVP. This is still local repo-doc retrieval only, not web search, vector search, semantic memory, model training, or a broad RAG system.
+- `retrieval-answer --query "..."` assembles short extractive answers only from retrieved chunks. Source-grounded answer statuses require valid citations; missing, weak, out-of-scope, or source-policy-blocked evidence returns an abstention/unsupported status.
+- The cited-answer schema records `answer_status`, `answer_text`, citations, unsupported claims, abstention reason, source-policy status, `quality_claim: none`, and `semantic_truth_claim: limited_or_none`.
+- The answer verifier checks citation presence, required fields, locator resolution, source-policy status, snippet hash integrity, citation markers in answer text, and a limited lexical/locator support check. It explicitly reports `semantic_support_level: lexical_or_locator_only`.
+- Hidden source-grounded/retrieval-grounded seed reports now include citation-verifier and answer-verifier results. Public summaries still omit answer text and private targets.
+- Citation validity and lexical support are not full semantic truth verification, and retrieval eval pass/fail is not a model-quality claim.
 
 ---
 

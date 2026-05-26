@@ -22,8 +22,12 @@ from eval_harness.hidden_eval_assets import (
     validate_hidden_eval_assets,
 )
 from retrieval.local_repo import (
+    ANSWER_SCHEMA,
+    assemble_cited_answer,
     build_index_for_paths,
+    make_citation,
     search_index,
+    validate_cited_answer,
     validate_citation_bundle,
 )
 
@@ -391,6 +395,7 @@ def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) 
     chunks = list(index.get("chunks", []))
     citations = []
     answer = ""
+    generic_answer = assemble_cited_answer(_source_query_for_item(item), index=index, top_k=3)
     if item_id == "hidden_truth_001":
         target_ref = "fixtures/source_docs/orchid_incident.md"
         impact_chunks = [
@@ -423,33 +428,32 @@ def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) 
             )
 
     if not answer:
-        search = search_index(_source_query_for_item(item), index=index, top_k=3)
-        return {
-            "answer_status": "abstained",
-            "answer": (search.get("abstention") or {}).get("answer", "No allowed evidence found."),
-            "citations": [],
-            "search_status": search.get("status"),
-            "document_refs": sorted(docs),
-        }
+        generic_answer["document_refs"] = sorted(docs)
+        generic_answer["answer"] = generic_answer.get("answer_text", "")
+        return generic_answer
+    citation_payloads = [make_citation(chunk, index) for index, chunk in enumerate(citations, start=1)]
     return {
+        "schema": ANSWER_SCHEMA,
+        "query": _source_query_for_item(item),
         "answer_status": "answered_with_citations",
+        "answer_text": " ".join(
+            f"{part.strip()} [c{index}]"
+            for index, part in enumerate(answer.split(". "), start=1)
+            if part.strip()
+        ),
         "answer": answer,
-        "citations": [
-            {
-                "schema": "retrieval_citation_v1",
-                "citation_id": f"c{index}",
-                "source_class": chunk["source_class"],
-                "source_id": chunk["source_id"],
-                "document_ref": chunk["document_ref"],
-                "locator_type": chunk["locator_type"],
-                "locator": chunk["locator"],
-                "support_kind": "provided_document_evidence",
-                "support_snippet_hash": chunk["support_snippet_hash"],
-            }
-            for index, chunk in enumerate(citations, start=1)
-        ],
+        "citations": citation_payloads,
+        "unsupported_claims": [],
+        "abstention_reason": None,
+        "source_policy_status": "allowed",
+        "quality_claim": "none",
+        "semantic_truth_claim": "limited_or_none",
+        "semantic_support_level": "lexical_or_locator_only",
         "search_status": "evidence_found",
         "document_refs": sorted(docs),
+        "answer_assembly": "hidden_eval_item_scoped_cited_template_v1",
+        "generic_answer_surface_status": generic_answer.get("answer_status"),
+        "proves_truth": False,
     }
 
 
@@ -461,17 +465,18 @@ def _verify_source_answer(
 ) -> Dict[str, Any]:
     citations = list(answer_payload.get("citations") or [])
     citation_validation = validate_citation_bundle(citations, index)
+    answer_validation = validate_cited_answer(answer_payload, index)
     required_citations = set(str(ref) for ref in target.get("required_citations", []))
     cited_refs = set(str(citation.get("document_ref")) for citation in citations)
     required_citation_status = required_citations.issubset(cited_refs)
-    answer_text = str(answer_payload.get("answer") or "").lower()
+    answer_text = str(answer_payload.get("answer_text") or answer_payload.get("answer") or "").lower()
     claim_fragments_present = all(
         str(fragment).lower() in answer_text
         for fragment in target.get("required_claim_fragments", [])
     )
     passed = (
         answer_payload.get("answer_status") == "answered_with_citations"
-        and bool(citation_validation.get("valid"))
+        and bool(answer_validation.get("valid"))
         and required_citation_status
         and claim_fragments_present
     )
@@ -479,8 +484,10 @@ def _verify_source_answer(
         "schema": "source_grounded_verifier_result_v1",
         "passed": passed,
         "citation_validation": citation_validation,
+        "answer_validation": answer_validation,
         "required_citation_status": required_citation_status,
         "claim_fragments_present": claim_fragments_present,
+        "semantic_support_level": answer_validation.get("semantic_support_level"),
         "quality_claim": "eval_status_only" if passed else "none",
     }
 
@@ -521,25 +528,32 @@ def _run_retrieval_item(
         "schema": "hidden_eval_retrieval_item_report_v1",
         "item_id": item.get("id"),
         "answer_status": answer_payload.get("answer_status"),
-        "answer": answer_payload.get("answer"),
+        "answer_text": answer_payload.get("answer_text") or answer_payload.get("answer"),
         "citations": answer_payload.get("citations", []),
         "document_refs": answer_payload.get("document_refs", []),
         "verifier": verifier,
+        "citation_verifier": verifier.get("citation_validation"),
+        "answer_verifier": verifier.get("answer_validation"),
+        "abstention_reason": answer_payload.get("abstention_reason"),
+        "semantic_truth_claim": answer_payload.get("semantic_truth_claim"),
         "private_target_exposed_in_public_summary": False,
         "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
     }
     retrieval_report_path = _write_json(retrieval_dir / f"{item['id']}.json", retrieval_report)
+    answer_status = str(answer_payload.get("answer_status") or "")
     result.update(
         {
-            "final_status": "passed" if verifier.get("passed") else ("blocked_unverified" if answer_payload.get("answer_status") == "abstained" else "verification_failed"),
+            "final_status": "passed" if verifier.get("passed") else ("blocked_unverified" if answer_status.startswith("abstained") or answer_status == "unsupported_current_phase" else "verification_failed"),
             "verifier_status": "passed" if verifier.get("passed") else "failed",
             "verifier_reached": True,
             "verifier_passed": bool(verifier.get("passed")),
             "retrieval_report_path": retrieval_report_path,
-            "retrieval_supported": answer_payload.get("answer_status") == "answered_with_citations",
-            "retrieval_abstained": answer_payload.get("answer_status") == "abstained",
+            "retrieval_supported": answer_status == "answered_with_citations",
+            "retrieval_abstained": answer_status.startswith("abstained") or answer_status == "unsupported_current_phase",
+            "answer_status": answer_status,
             "citation_count": len(answer_payload.get("citations") or []),
             "citation_verifier_passed": bool((verifier.get("citation_validation") or {}).get("valid")),
+            "answer_verifier_passed": bool((verifier.get("answer_validation") or {}).get("valid")),
             "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
         }
@@ -599,6 +613,7 @@ def _summary_counts(results: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         "retrieval_supported": _count(results, lambda item: bool(item.get("retrieval_supported"))),
         "retrieval_abstained": _count(results, lambda item: bool(item.get("retrieval_abstained"))),
         "citation_verifier_passed": _count(results, lambda item: bool(item.get("citation_verifier_passed"))),
+        "answer_verifier_passed": _count(results, lambda item: bool(item.get("answer_verifier_passed"))),
         "verifier_reached": _count(results, lambda item: bool(item.get("verifier_reached"))),
         "verifier_passed": _count(results, lambda item: bool(item.get("verifier_passed"))),
     }
@@ -673,7 +688,10 @@ def run_hidden_eval_seed_execution(
             "agent_run_id": result["agent_run_id"],
             "retrieval_supported": bool(result.get("retrieval_supported")),
             "retrieval_abstained": bool(result.get("retrieval_abstained")),
+            "answer_status": result.get("answer_status"),
             "citation_count": result.get("citation_count", 0),
+            "citation_verifier_passed": bool(result.get("citation_verifier_passed")),
+            "answer_verifier_passed": bool(result.get("answer_verifier_passed")),
             "private_target_used": result["private_target_used"],
             "private_target_exposed_in_public_summary": False,
             "answer_exposed_in_public_summary": False,

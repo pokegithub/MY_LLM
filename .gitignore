@@ -9,6 +9,7 @@ run_artifacts/
 eval_results/
 *.log
 *.jsonl
+!evals/hidden/hidden_eval_seed_set_v1.jsonl
 *.tmp
 
 data_cache/

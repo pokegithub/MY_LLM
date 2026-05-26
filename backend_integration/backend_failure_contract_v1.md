@@ -23,14 +23,14 @@ Purpose: define how backend-related failures must surface without weakening the 
 - Must never be misreported as success: yes
 
 ### `malformed_candidate_output`
-- Report as: `blocked_unverified` for initial-candidate failure, or failed attempt with explicit critique if it happens mid-loop in a future implementation
-- Retry in same solve: only if a later explicit retry policy is added; first integration should fail closed
+- Report as: `blocked_unverified` after bounded malformed-output retry exhaustion for initial-candidate failure, or failed attempt with explicit critique if it happens mid-loop
+- Retry in same solve: only through the explicit bounded malformed/schema formatting retry policy; retries are logged formatting attempts, not progress
 - Truthful report still possible: yes
 - Must never be misreported as progress: yes
 
 ### `schema_validation_failed`
 - Report as: `blocked_unverified`
-- Retry in same solve: no for first integration
+- Retry in same solve: only through the explicit bounded malformed/schema formatting retry policy; after retry exhaustion fail closed
 - Truthful report still possible: yes
 - Must never be misreported as success: yes
 
@@ -68,5 +68,6 @@ Purpose: define how backend-related failures must surface without weakening the 
 
 - backend health must not affect deterministic exact-task routing
 - verifier remains the final authority on success
+- bounded malformed/schema retries do not count as progress or success
 - malformed or unavailable backend output is not partial success
 - a truthful report must still be written whenever possible

@@ -13,9 +13,53 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 INDEX_SCHEMA = "local_repo_docs_retrieval_index_v1"
 CITATION_SCHEMA = "retrieval_citation_v1"
+ANSWER_SCHEMA = "retrieval_cited_answer_v1"
+ANSWER_VALIDATION_SCHEMA = "retrieval_cited_answer_validation_v1"
 DEFAULT_INDEX_PATH = "./run_artifacts/retrieval_index/local_repo_docs_index_v1.json"
 ALLOWED_SOURCE_CLASS = "allowed"
 ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".jsonl"}
+ANSWERED_STATUSES = {"answered_with_citations", "partial_answer_with_caveats"}
+ABSTENTION_STATUSES = {
+    "abstained_no_evidence",
+    "abstained_out_of_scope",
+    "blocked_source_policy",
+    "unsupported_current_phase",
+}
+QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "for",
+    "how",
+    "in",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+OUT_OF_SCOPE_QUERY_MARKERS = (
+    "today",
+    "latest",
+    "current news",
+    "world news",
+    "breaking news",
+    "weather",
+    "stock price",
+    "exchange rate",
+    "search the web",
+    "internet",
+)
 ALLOWED_DOC_ROOTS = (
     "SYSTEM_MAP.md",
     "backend_integration",
@@ -81,8 +125,27 @@ def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-z0-9_]+", text.lower())
 
 
+def _query_terms(text: str) -> List[str]:
+    return [token for token in _tokenize(text) if len(token) > 2 and token not in QUERY_STOPWORDS]
+
+
 def _is_prefix(path_ref: str, prefix: str) -> bool:
     return path_ref == prefix or path_ref.startswith(prefix.rstrip("/") + "/")
+
+
+def _is_document_ref_blocked_for_citation(document_ref: str) -> Tuple[bool, Optional[str]]:
+    normalized = document_ref.replace("\\", "/").strip().lower()
+    if not normalized:
+        return True, "empty_document_ref"
+    if normalized.startswith("evals/hidden/private") or "/private/" in normalized:
+        return True, "hidden_private_source_not_citable"
+    for prefix in EXCLUDED_PREFIXES:
+        if _is_prefix(normalized, prefix.lower()):
+            return True, f"excluded_prefix_not_citable:{prefix}"
+    for marker in EXCLUDED_NAME_PARTS:
+        if marker in normalized:
+            return True, f"excluded_name_marker_not_citable:{marker}"
+    return False, None
 
 
 def classify_repo_path(path: Path, workspace_root: str = ".") -> Tuple[str, str]:
@@ -318,13 +381,27 @@ def search_index(
             "abstention": abstain_for_missing_evidence(query, reason="empty_query"),
         }
     scored = []
+    useful_query_tokens = _query_terms(query)
     for chunk in index.get("chunks", []):
         if chunk.get("source_class") != ALLOWED_SOURCE_CLASS:
             continue
-        text_tokens = _tokenize(str(chunk.get("content", "")) + " " + str(chunk.get("document_ref", "")))
-        token_set = set(text_tokens)
+        content = str(chunk.get("content", ""))
+        document_ref = str(chunk.get("document_ref", ""))
+        content_lower = content.lower()
+        document_lower = document_ref.lower().replace("/", " ").replace("_", " ")
+        content_tokens = _tokenize(content)
+        document_tokens = _tokenize(document_lower)
+        token_set = set(content_tokens + document_tokens)
+        document_token_set = set(document_tokens)
         score = sum(2 if token in token_set else 0 for token in query_tokens)
-        score += sum(str(chunk.get("content", "")).lower().count(token) for token in query_tokens)
+        score += sum(content_lower.count(token) for token in query_tokens)
+        document_match_count = sum(1 for token in useful_query_tokens if token in document_token_set)
+        score += document_match_count * 10
+        if useful_query_tokens and document_match_count == len(useful_query_tokens):
+            score += 75
+        if document_ref.endswith(".md") and document_match_count:
+            score += 10
+        score += sum(document_lower.count(token) * 3 for token in useful_query_tokens)
         if score > 0:
             scored.append((score, chunk))
     scored.sort(key=lambda item: (-item[0], str(item[1].get("document_ref")), str(item[1].get("locator"))))
@@ -380,6 +457,14 @@ def validate_citation(citation: Mapping[str, Any], index: Mapping[str, Any]) -> 
             "source_policy_status": "blocked",
             "locator_resolution_status": "not_checked",
         }
+    blocked, block_reason = _is_document_ref_blocked_for_citation(str(citation.get("document_ref", "")))
+    if blocked:
+        return {
+            "valid": False,
+            "failure_reason": block_reason,
+            "source_policy_status": "blocked",
+            "locator_resolution_status": "not_checked",
+        }
     if citation.get("locator_type") not in ALLOWED_LOCATOR_TYPES:
         return {
             "valid": False,
@@ -400,14 +485,6 @@ def validate_citation(citation: Mapping[str, Any], index: Mapping[str, Any]) -> 
             "valid": False,
             "failure_reason": "support_snippet_hash_mismatch",
             "source_policy_status": "allowed",
-            "locator_resolution_status": "resolved",
-        }
-    document_ref = str(citation.get("document_ref", ""))
-    if document_ref.startswith("evals/hidden/private") or "/private/" in document_ref:
-        return {
-            "valid": False,
-            "failure_reason": "hidden_private_source_not_citable",
-            "source_policy_status": "blocked",
             "locator_resolution_status": "resolved",
         }
     return {
@@ -441,6 +518,273 @@ def abstain_for_missing_evidence(query: str, *, reason: str) -> Dict[str, Any]:
         "answer": "I do not have allowed local evidence for that claim in the current retrieval scope.",
         "query": query,
         "quality_claim": "none",
+    }
+
+
+def _query_is_out_of_scope(query: str) -> bool:
+    lowered = query.lower()
+    return any(marker in lowered for marker in OUT_OF_SCOPE_QUERY_MARKERS)
+
+
+def _answer_abstention_payload(
+    query: str,
+    *,
+    answer_status: str,
+    reason: str,
+    source_policy_status: str = "not_checked",
+) -> Dict[str, Any]:
+    return {
+        "schema": ANSWER_SCHEMA,
+        "query": query,
+        "answer_status": answer_status,
+        "answer_text": "",
+        "citations": [],
+        "unsupported_claims": [query] if query.strip() else [],
+        "abstention_reason": reason,
+        "source_policy_status": source_policy_status,
+        "quality_claim": "none",
+        "semantic_truth_claim": "limited_or_none",
+        "semantic_support_level": "none",
+        "search_status": "not_attempted" if answer_status == "unsupported_current_phase" else "abstained",
+        "answer_assembly": "abstention_policy_v1",
+        "proves_truth": False,
+    }
+
+
+def _clean_snippet_for_answer(content: str, *, max_chars: int = 260) -> str:
+    parts: List[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = re.sub(r"^[-*]\s*", "", line)
+        if line:
+            parts.append(line)
+        if len(" ".join(parts)) >= max_chars:
+            break
+    text = " ".join(parts).strip()
+    if len(text) > max_chars:
+        text = text[: max_chars - 3].rstrip() + "..."
+    return text
+
+
+def _chunk_by_citation(index: Mapping[str, Any], citation: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    return _find_chunk(index, citation)
+
+
+def _citation_answer_markers_present(answer_text: str, citations: Sequence[Mapping[str, Any]]) -> bool:
+    if not answer_text.strip() or not citations:
+        return False
+    return any(f"[{citation.get('citation_id')}]" in answer_text for citation in citations)
+
+
+def _query_coverage_from_citations(
+    query: str,
+    citations: Sequence[Mapping[str, Any]],
+    index: Mapping[str, Any],
+) -> Dict[str, Any]:
+    query_terms = set(_query_terms(query))
+    if not query_terms:
+        return {"matched_terms": [], "query_terms": [], "coverage_ratio": 0.0, "direct_enough": False}
+    evidence_terms = set()
+    for citation in citations:
+        chunk = _chunk_by_citation(index, citation)
+        if not chunk:
+            continue
+        evidence_terms.update(_query_terms(str(chunk.get("content", ""))))
+        evidence_terms.update(_query_terms(str(chunk.get("document_ref", ""))))
+    matched = sorted(query_terms.intersection(evidence_terms))
+    coverage_ratio = len(matched) / len(query_terms)
+    return {
+        "matched_terms": matched,
+        "query_terms": sorted(query_terms),
+        "coverage_ratio": coverage_ratio,
+        "direct_enough": coverage_ratio >= 0.5,
+    }
+
+
+def assemble_cited_answer(
+    query: str,
+    *,
+    index: Optional[Mapping[str, Any]] = None,
+    index_path: str = DEFAULT_INDEX_PATH,
+    workspace_root: str = ".",
+    top_k: int = 3,
+) -> Dict[str, Any]:
+    """Assemble a short evidence-bound answer or abstain.
+
+    This is intentionally extractive/template-based. It does not ask a model to
+    synthesize unsupported claims, and it reports only lexical/locator support.
+    """
+    if _query_is_out_of_scope(query):
+        return _answer_abstention_payload(
+            query,
+            answer_status="unsupported_current_phase",
+            reason="requires_external_or_current_source",
+            source_policy_status="out_of_scope",
+        )
+    if index is None:
+        index = load_index(index_path, workspace_root=workspace_root)
+    search = search_index(query, index=index, top_k=top_k)
+    if search.get("status") != "evidence_found":
+        return _answer_abstention_payload(
+            query,
+            answer_status="abstained_no_evidence",
+            reason=(search.get("abstention") or {}).get("reason", "no_allowed_evidence_found"),
+            source_policy_status="allowed",
+        )
+    citations = list(search.get("citations") or [])
+    coverage = _query_coverage_from_citations(query, citations, index)
+    if not coverage.get("direct_enough"):
+        payload = _answer_abstention_payload(
+            query,
+            answer_status="abstained_no_evidence",
+            reason="weak_lexical_evidence",
+            source_policy_status="allowed",
+        )
+        payload["claim_support_check"] = coverage
+        return payload
+    validation = validate_citation_bundle(citations, index)
+    if not validation.get("valid"):
+        return _answer_abstention_payload(
+            query,
+            answer_status="blocked_source_policy",
+            reason=str(validation.get("failure_reason") or "invalid_citations"),
+            source_policy_status="blocked",
+        )
+    answer_parts: List[str] = []
+    used_citations: List[Mapping[str, Any]] = []
+    answer_ordered_citations = sorted(
+        citations[:top_k],
+        key=lambda citation: (0 if str(citation.get("document_ref", "")).endswith(".md") else 1, str(citation.get("document_ref", ""))),
+    )
+    for citation in answer_ordered_citations:
+        chunk = _chunk_by_citation(index, citation)
+        if not chunk:
+            continue
+        cleaned = _clean_snippet_for_answer(str(chunk.get("content", "")))
+        if cleaned:
+            answer_parts.append(f"{cleaned} [{citation.get('citation_id')}]")
+            used_citations.append(citation)
+        if len(answer_parts) >= 2:
+            break
+    if not answer_parts:
+        return _answer_abstention_payload(
+            query,
+            answer_status="abstained_no_evidence",
+            reason="retrieved_chunks_had_no_reusable_text",
+            source_policy_status="allowed",
+        )
+    payload = {
+        "schema": ANSWER_SCHEMA,
+        "query": query,
+        "answer_status": "answered_with_citations",
+        "answer_text": " ".join(answer_parts),
+        "citations": used_citations,
+        "unsupported_claims": [],
+        "abstention_reason": None,
+        "source_policy_status": "allowed",
+        "quality_claim": "none",
+        "semantic_truth_claim": "limited_or_none",
+        "semantic_support_level": "lexical_or_locator_only",
+        "search_status": search.get("status"),
+        "answer_assembly": "extractive_template_v1",
+        "proves_truth": False,
+    }
+    payload["answer_verification"] = validate_cited_answer(payload, index)
+    return payload
+
+
+def _lexical_support_for_answer(
+    *,
+    answer_text: str,
+    citations: Sequence[Mapping[str, Any]],
+    index: Mapping[str, Any],
+) -> Dict[str, Any]:
+    answer_terms = set(_query_terms(answer_text))
+    chunk_terms = set()
+    resolved = 0
+    for citation in citations:
+        chunk = _chunk_by_citation(index, citation)
+        if not chunk:
+            continue
+        resolved += 1
+        chunk_terms.update(_query_terms(str(chunk.get("content", ""))))
+    overlap = answer_terms.intersection(chunk_terms)
+    return {
+        "semantic_support_level": "lexical_or_locator_only",
+        "resolved_citation_count": resolved,
+        "answer_term_count": len(answer_terms),
+        "citation_term_count": len(chunk_terms),
+        "lexical_overlap_count": len(overlap),
+        "lexical_overlap_terms": sorted(overlap)[:20],
+        "supported": bool(overlap) or not answer_terms,
+    }
+
+
+def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str, Any]) -> Dict[str, Any]:
+    status = str(answer_payload.get("answer_status") or "")
+    answer_text = str(answer_payload.get("answer_text") or answer_payload.get("answer") or "")
+    citations = list(answer_payload.get("citations") or [])
+    failure_reasons: List[str] = []
+
+    if answer_payload.get("schema") != ANSWER_SCHEMA:
+        failure_reasons.append("schema_mismatch")
+    if status not in ANSWERED_STATUSES and status not in ABSTENTION_STATUSES:
+        failure_reasons.append("unknown_answer_status")
+
+    citation_validation = validate_citation_bundle(citations, index) if citations else {
+        "schema": "retrieval_citation_validation_v1",
+        "valid": False,
+        "citation_count": 0,
+        "results": [],
+        "failure_reason": "missing_or_invalid_citations",
+        "quality_claim": "none",
+        "proves_truth": False,
+    }
+    if status in ANSWERED_STATUSES:
+        if not answer_text.strip():
+            failure_reasons.append("answered_status_requires_answer_text")
+        if not citations:
+            failure_reasons.append("answered_status_requires_citations")
+        if not citation_validation.get("valid"):
+            failure_reasons.append("invalid_citations")
+        if not _citation_answer_markers_present(answer_text, citations):
+            failure_reasons.append("answer_text_missing_citation_marker")
+    elif citations:
+        failure_reasons.append("abstention_status_must_not_include_citations")
+
+    support = _lexical_support_for_answer(answer_text=answer_text, citations=citations, index=index)
+    if status in ANSWERED_STATUSES and not support.get("supported"):
+        failure_reasons.append("answer_lacks_lexical_overlap_with_citations")
+
+    source_policy_status = "allowed"
+    if citation_validation.get("results") and any(
+        item.get("source_policy_status") == "blocked" for item in citation_validation.get("results", [])
+    ):
+        source_policy_status = "blocked"
+        failure_reasons.append("source_policy_blocked")
+    elif status in {"unsupported_current_phase", "abstained_out_of_scope"}:
+        source_policy_status = str(answer_payload.get("source_policy_status") or "out_of_scope")
+
+    valid = not failure_reasons and (status in ABSTENTION_STATUSES or bool(citation_validation.get("valid")))
+    return {
+        "schema": ANSWER_VALIDATION_SCHEMA,
+        "valid": valid,
+        "failure_reasons": sorted(set(failure_reasons)),
+        "failure_reason": None if valid else ",".join(sorted(set(failure_reasons))),
+        "answer_status": status,
+        "citation_count": len(citations),
+        "resolved_citation_count": support.get("resolved_citation_count", 0),
+        "citation_validation": citation_validation,
+        "support_level": "lexical_or_locator_only" if citations else "none",
+        "semantic_support_level": support.get("semantic_support_level"),
+        "semantic_truth_claim": "limited_or_none",
+        "source_policy_status": source_policy_status,
+        "claim_support_check": support,
+        "quality_claim": "none",
+        "proves_truth": False,
     }
 
 

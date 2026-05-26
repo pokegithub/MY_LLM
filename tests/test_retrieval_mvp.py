@@ -5,10 +5,14 @@ import unittest
 
 from eval_harness.hidden_seed_runner import run_hidden_eval_seed_execution
 from retrieval.local_repo import (
+    ANSWER_SCHEMA,
     abstain_for_missing_evidence,
+    assemble_cited_answer,
+    build_index_for_paths,
     build_local_repo_docs_index,
     citation_check_for_query,
     search_index,
+    validate_cited_answer,
     validate_citation,
     validate_citation_bundle,
 )
@@ -63,6 +67,22 @@ class RetrievalMvpTests(unittest.TestCase):
         self.assertFalse(validate_citation(citation, index)["valid"])
         self.assertFalse(validate_citation_bundle([], index)["valid"])
 
+    def test_citation_validator_rejects_invalid_locator_and_hidden_private_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            private_dir = os.path.join(td, "evals", "hidden", "private")
+            os.makedirs(private_dir)
+            private_path = os.path.join(private_dir, "secret.md")
+            with open(private_path, "w", encoding="utf-8") as handle:
+                handle.write("secret private target text\n")
+            index = build_index_for_paths([private_path], workspace_root=td)
+            citation = search_index("secret", index=index)["citations"][0]
+
+        self.assertFalse(validate_citation(citation, index)["valid"])
+        citation = dict(citation)
+        citation["document_ref"] = "SYSTEM_MAP.md"
+        citation["locator"] = "999-1000"
+        self.assertFalse(validate_citation(citation, index)["valid"])
+
     def test_empty_or_out_of_scope_retrieval_abstains(self):
         self.assertEqual(
             abstain_for_missing_evidence("external current weather", reason="out_of_scope")["status"],
@@ -85,6 +105,51 @@ class RetrievalMvpTests(unittest.TestCase):
         self.assertTrue(report["citation_validation"]["valid"])
         self.assertEqual(report["quality_claim"], "none")
 
+    def test_cited_answer_surface_requires_valid_citations(self):
+        with tempfile.TemporaryDirectory() as td:
+            index = build_local_repo_docs_index(output_path=os.path.join(td, "index.json"))
+            answer = assemble_cited_answer("What is the backend failure contract?", index=index)
+
+        self.assertEqual(answer["schema"], ANSWER_SCHEMA)
+        self.assertEqual(answer["answer_status"], "answered_with_citations")
+        self.assertTrue(answer["citations"])
+        self.assertIn("[c", answer["answer_text"])
+        validation = validate_cited_answer(answer, index)
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["semantic_truth_claim"], "limited_or_none")
+
+    def test_cited_answer_verifier_rejects_missing_citations_and_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            index = build_local_repo_docs_index(output_path=os.path.join(td, "index.json"))
+            answer = assemble_cited_answer("backend failure contract", index=index)
+
+        no_citations = dict(answer)
+        no_citations["citations"] = []
+        self.assertFalse(validate_cited_answer(no_citations, index)["valid"])
+        bad_hash = dict(answer)
+        bad_hash["citations"] = [dict(answer["citations"][0], support_snippet_hash="bad")]
+        self.assertFalse(validate_cited_answer(bad_hash, index)["valid"])
+
+    def test_answer_surface_abstains_for_out_of_scope_and_does_not_invent(self):
+        with tempfile.TemporaryDirectory() as td:
+            index = build_local_repo_docs_index(output_path=os.path.join(td, "index.json"))
+            out_of_scope = assemble_cited_answer("What happened in today's world news?", index=index)
+            no_evidence = assemble_cited_answer("qzzx nonexistent private miracle claim", index=index)
+
+        self.assertEqual(out_of_scope["answer_status"], "unsupported_current_phase")
+        self.assertEqual(out_of_scope["citations"], [])
+        self.assertEqual(no_evidence["answer_status"], "abstained_no_evidence")
+        self.assertEqual(no_evidence["citations"], [])
+
+    def test_retrieval_answer_module_has_no_web_vector_or_memory_path(self):
+        with open(os.path.join("retrieval", "local_repo.py"), "r", encoding="utf-8") as handle:
+            source = handle.read().lower()
+        self.assertNotIn("requests.", source)
+        self.assertNotIn("urllib.request", source)
+        self.assertNotIn("faiss", source)
+        self.assertNotIn("chromadb", source)
+        self.assertNotIn("embedding", source)
+
     def test_hidden_eval_source_items_run_without_public_private_answer_leakage(self):
         with tempfile.TemporaryDirectory() as td:
             report = run_hidden_eval_seed_execution(
@@ -99,6 +164,7 @@ class RetrievalMvpTests(unittest.TestCase):
         self.assertEqual(report["counts"]["retrieval_routed"], 2)
         self.assertEqual(report["counts"]["retrieval_supported"], 2)
         self.assertEqual(report["counts"]["verifier_passed"], 2)
+        self.assertEqual(report["counts"]["answer_verifier_passed"], 2)
         self.assertFalse(report["private_target_exposed_in_public_summary"])
         self.assertFalse(report["answer_exposed_in_public_summary"])
         self.assertNotIn("required_claim_fragments", public_summary)
