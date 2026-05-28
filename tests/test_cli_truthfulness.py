@@ -52,6 +52,18 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("items", payload)
 
+    def test_compile_source_json_is_tracked_source_scope_only(self):
+        result = self.run_command("compile-source", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema"], "source_compile_report_v1")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["scope"], "tracked_python_sources_only")
+        self.assertFalse(payload["full_compileall_replacement"])
+        self.assertFalse(payload["behavior_changed"])
+        self.assertIn("run_artifacts", payload["skipped_generated_roots"])
+        self.assertGreater(payload["scanned_count"], 0)
+
     def test_status_json_reports_next_action(self):
         result = self.run_command("status", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)

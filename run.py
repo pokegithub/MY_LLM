@@ -509,6 +509,8 @@ def run_compile_source():
     payload = {
         "schema": "source_compile_report_v1",
         "ok": not failures,
+        "scope": "tracked_python_sources_only",
+        "full_compileall_replacement": False,
         "scanned_count": len(scanned),
         "skipped_count": len(skipped),
         "skipped_generated_roots": skipped_roots,
@@ -521,12 +523,14 @@ def run_compile_source():
         print("\n" + "=" * 60)
         print("SOURCE COMPILE")
         print("=" * 60)
-        print(f"  scanned       : {payload['scanned_count']}")
-        print(f"  skipped       : {payload['skipped_count']}")
-        print(f"  skipped_roots : {', '.join(skipped_roots)}")
-        print(f"  ok            : {str(payload['ok']).lower()}")
+        print(f"  scope                     : {payload['scope']}")
+        print(f"  full_compileall_replacement: {str(payload['full_compileall_replacement']).lower()}")
+        print(f"  scanned                   : {payload['scanned_count']}")
+        print(f"  skipped                   : {payload['skipped_count']}")
+        print(f"  skipped_roots             : {', '.join(skipped_roots)}")
+        print(f"  ok                        : {str(payload['ok']).lower()}")
         for failure in failures[:10]:
-            print(f"  failure       : {failure['path']} :: {failure['error']}")
+            print(f"  failure                   : {failure['path']} :: {failure['error']}")
         print("=" * 60)
     if failures:
         sys.exit(1)
@@ -813,6 +817,8 @@ def run_hidden_eval_seed_run(args):
     print(f"  retrieval_abstained : {counts.get('retrieval_abstained')}")
     print(f"  citation_passed     : {counts.get('citation_verifier_passed')}")
     print(f"  answer_passed       : {counts.get('answer_verifier_passed')}")
+    print(f"  claim_passed        : {counts.get('claim_verifier_passed')}")
+    print(f"  claims_unsupported  : {counts.get('claims_unsupported')}")
     print(f"  verifier_reached    : {counts.get('verifier_reached')}")
     print(f"  verifier_passed     : {counts.get('verifier_passed')}")
     print(f"  backend_kind        : {payload.get('backend_kind')}")
@@ -968,6 +974,13 @@ def run_retrieval_answer(args):
     print(f"  verifier_valid : {str(validation.get('valid')).lower()}")
     if validation.get("failure_reason"):
         print(f"  failure_reason : {validation.get('failure_reason')}")
+    print(f"  claim_count    : {validation.get('claim_count')}")
+    print(f"  claims_checked : {validation.get('claims_checked')}")
+    print(f"  claims_supported: {validation.get('claims_supported')}")
+    print(f"  claims_unsupported: {validation.get('claims_unsupported')}")
+    print(f"  claim_support  : {validation.get('claim_support_level')}")
+    for claim in validation.get("unsupported_claims", [])[: args.limit]:
+        print(f"  unsupported    : {claim.get('claim_text')} :: {claim.get('unsupported_reason')}")
     print(f"  source_policy  : {validation.get('source_policy_status')}")
     print(f"  support_level  : {validation.get('support_level')}")
     print(f"  semantic_truth : {validation.get('semantic_truth_claim')}")

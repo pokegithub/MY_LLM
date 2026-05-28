@@ -11,6 +11,7 @@ from retrieval.local_repo import (
     build_index_for_paths,
     build_local_repo_docs_index,
     citation_check_for_query,
+    extract_answer_claims,
     search_index,
     validate_cited_answer,
     validate_citation,
@@ -116,6 +117,10 @@ class RetrievalMvpTests(unittest.TestCase):
         self.assertIn("[c", answer["answer_text"])
         validation = validate_cited_answer(answer, index)
         self.assertTrue(validation["valid"])
+        self.assertTrue(validation["answer_verifier_valid"])
+        self.assertGreater(validation["claim_count"], 0)
+        self.assertEqual(validation["claims_unsupported"], 0)
+        self.assertIn(validation["claim_support_level"], {"direct_quote_or_near_quote", "lexical_overlap"})
         self.assertEqual(validation["semantic_truth_claim"], "limited_or_none")
 
     def test_cited_answer_verifier_rejects_missing_citations_and_hash_mismatch(self):
@@ -130,14 +135,45 @@ class RetrievalMvpTests(unittest.TestCase):
         bad_hash["citations"] = [dict(answer["citations"][0], support_snippet_hash="bad")]
         self.assertFalse(validate_cited_answer(bad_hash, index)["valid"])
 
+    def test_claim_extraction_and_verifier_catch_uncited_or_unsupported_claims(self):
+        with tempfile.TemporaryDirectory() as td:
+            index = build_local_repo_docs_index(output_path=os.path.join(td, "index.json"))
+            answer = assemble_cited_answer("backend failure contract", index=index)
+
+        claims = extract_answer_claims(answer["answer_text"])
+        self.assertTrue(claims)
+        self.assertTrue(all("claim_id" in claim for claim in claims))
+
+        uncited = dict(answer)
+        uncited["answer_text"] = answer["answer_text"] + " This sentence has no citation."
+        uncited_validation = validate_cited_answer(uncited, index)
+        self.assertFalse(uncited_validation["valid"])
+        self.assertIn("unsupported_claims_present", uncited_validation["failure_reasons"])
+        self.assertGreater(uncited_validation["claims_unsupported"], 0)
+
+        unsupported = dict(answer)
+        unsupported["answer_text"] = answer["answer_text"] + " The backend is production ready. [c1]"
+        unsupported_validation = validate_cited_answer(unsupported, index)
+        self.assertFalse(unsupported_validation["valid"])
+        self.assertGreater(unsupported_validation["claims_unsupported"], 0)
+        self.assertTrue(
+            any(
+                claim.get("unsupported_reason") == "weak_lexical_support"
+                for claim in unsupported_validation["unsupported_claims"]
+            )
+        )
+
     def test_answer_surface_abstains_for_out_of_scope_and_does_not_invent(self):
         with tempfile.TemporaryDirectory() as td:
             index = build_local_repo_docs_index(output_path=os.path.join(td, "index.json"))
             out_of_scope = assemble_cited_answer("What happened in today's world news?", index=index)
+            weak_evidence = assemble_cited_answer("qzzx backend", index=index)
             no_evidence = assemble_cited_answer("qzzx nonexistent private miracle claim", index=index)
 
         self.assertEqual(out_of_scope["answer_status"], "unsupported_current_phase")
         self.assertEqual(out_of_scope["citations"], [])
+        self.assertEqual(weak_evidence["answer_status"], "abstained_no_evidence")
+        self.assertEqual(weak_evidence["abstention_reason"], "weak_lexical_evidence")
         self.assertEqual(no_evidence["answer_status"], "abstained_no_evidence")
         self.assertEqual(no_evidence["citations"], [])
 
@@ -165,6 +201,12 @@ class RetrievalMvpTests(unittest.TestCase):
         self.assertEqual(report["counts"]["retrieval_supported"], 2)
         self.assertEqual(report["counts"]["verifier_passed"], 2)
         self.assertEqual(report["counts"]["answer_verifier_passed"], 2)
+        self.assertEqual(report["counts"]["claim_verifier_passed"], 2)
+        self.assertEqual(report["counts"]["claims_unsupported"], 0)
+        for item in report["items"]:
+            self.assertGreater(item["claim_count"], 0)
+            self.assertEqual(item["claims_unsupported"], 0)
+            self.assertTrue(item["claim_verifier_passed"])
         self.assertFalse(report["private_target_exposed_in_public_summary"])
         self.assertFalse(report["answer_exposed_in_public_summary"])
         self.assertNotIn("required_claim_fragments", public_summary)

@@ -15,6 +15,7 @@ INDEX_SCHEMA = "local_repo_docs_retrieval_index_v1"
 CITATION_SCHEMA = "retrieval_citation_v1"
 ANSWER_SCHEMA = "retrieval_cited_answer_v1"
 ANSWER_VALIDATION_SCHEMA = "retrieval_cited_answer_validation_v1"
+CLAIM_SUPPORT_SCHEMA = "retrieval_claim_support_report_v1"
 DEFAULT_INDEX_PATH = "./run_artifacts/retrieval_index/local_repo_docs_index_v1.json"
 ALLOWED_SOURCE_CLASS = "allowed"
 ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".jsonl"}
@@ -111,6 +112,7 @@ REQUIRED_CITATION_FIELDS = (
     "support_snippet_hash",
 )
 ALLOWED_LOCATOR_TYPES = {"line_range", "json_pointer", "section_heading"}
+PASSING_CLAIM_SUPPORT_LEVELS = {"direct_quote_or_near_quote", "lexical_overlap"}
 
 
 def _repo_rel(path: Path, workspace_root: Path) -> str:
@@ -127,6 +129,11 @@ def _tokenize(text: str) -> List[str]:
 
 def _query_terms(text: str) -> List[str]:
     return [token for token in _tokenize(text) if len(token) > 2 and token not in QUERY_STOPWORDS]
+
+
+def _claim_terms(text: str) -> List[str]:
+    text = re.sub(r"\[c\d+\]", " ", text, flags=re.IGNORECASE)
+    return [token for token in _query_terms(text) if not token.startswith("c")]
 
 
 def _is_prefix(path_ref: str, prefix: str) -> bool:
@@ -579,6 +586,60 @@ def _citation_answer_markers_present(answer_text: str, citations: Sequence[Mappi
     return any(f"[{citation.get('citation_id')}]" in answer_text for citation in citations)
 
 
+def _strip_citation_markers(text: str) -> str:
+    return re.sub(r"\[c\d+\]", "", text, flags=re.IGNORECASE).strip()
+
+
+def _normalize_claim_text(text: str) -> str:
+    cleaned = _strip_citation_markers(text)
+    cleaned = re.sub(r"[`*_#>\-]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip().lower()
+
+
+def _split_uncited_text_into_claims(text: str) -> List[str]:
+    pieces = re.split(r"(?<=[.!?])\s+|\n+|(?:^|\n)\s*[-*]\s+", text)
+    return [piece.strip() for piece in pieces if piece.strip()]
+
+
+def extract_answer_claims(answer_text: str) -> List[Dict[str, Any]]:
+    """Split a cited answer into deterministic, checkable claim records.
+
+    Citation-marked spans are kept intact so extractive answers such as
+    "sentence one. sentence two [c1]" are treated as one cited evidence-bound
+    claim instead of a free-floating uncited first sentence.
+    """
+    text = str(answer_text or "").strip()
+    if not text:
+        return []
+    claims: List[Dict[str, Any]] = []
+    cursor = 0
+    marker_span = re.compile(r".*?\[(?:c\d+)(?:\s*,\s*c\d+)*\]", re.IGNORECASE | re.DOTALL)
+    for match in marker_span.finditer(text):
+        before = text[cursor:match.start()].strip()
+        for piece in _split_uncited_text_into_claims(before):
+            claims.append(_claim_record(len(claims) + 1, piece))
+        claims.append(_claim_record(len(claims) + 1, match.group(0).strip()))
+        cursor = match.end()
+    for piece in _split_uncited_text_into_claims(text[cursor:].strip()):
+        claims.append(_claim_record(len(claims) + 1, piece))
+    return claims
+
+
+def _claim_record(index: int, claim_text: str) -> Dict[str, Any]:
+    citation_ids = re.findall(r"\[(c\d+)\]", claim_text, flags=re.IGNORECASE)
+    normalized_text = _normalize_claim_text(claim_text)
+    requires_citation = bool(_claim_terms(normalized_text))
+    return {
+        "claim_id": f"claim_{index}",
+        "claim_text": claim_text.strip(),
+        "requires_citation": requires_citation,
+        "support_status": "not_checked",
+        "supporting_citation_ids": [citation_id.lower() for citation_id in citation_ids],
+        "unsupported_reason": None,
+    }
+
+
 def _query_coverage_from_citations(
     query: str,
     citations: Sequence[Mapping[str, Any]],
@@ -600,7 +661,7 @@ def _query_coverage_from_citations(
         "matched_terms": matched,
         "query_terms": sorted(query_terms),
         "coverage_ratio": coverage_ratio,
-        "direct_enough": coverage_ratio >= 0.5,
+        "direct_enough": coverage_ratio >= 0.6,
     }
 
 
@@ -693,33 +754,156 @@ def assemble_cited_answer(
         "proves_truth": False,
     }
     payload["answer_verification"] = validate_cited_answer(payload, index)
+    payload["unsupported_claims"] = [
+        claim.get("claim_text")
+        for claim in payload["answer_verification"].get("unsupported_claims", [])
+    ]
     return payload
 
 
-def _lexical_support_for_answer(
+def _citation_lookup(citations: Sequence[Mapping[str, Any]]) -> Dict[str, Mapping[str, Any]]:
+    return {str(citation.get("citation_id", "")).lower(): citation for citation in citations}
+
+
+def _direct_or_lexical_claim_support(
+    claim_text: str,
+    citation_ids: Sequence[str],
+    citations: Sequence[Mapping[str, Any]],
+    index: Mapping[str, Any],
+    citation_results: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Any]:
+    lookup = _citation_lookup(citations)
+    if not citation_ids:
+        return {
+            "support_status": "unsupported",
+            "unsupported_reason": "missing_claim_citation",
+            "supporting_citation_ids": [],
+            "matched_terms": [],
+            "coverage_ratio": 0.0,
+        }
+
+    evidence_texts: List[str] = []
+    valid_citation_ids: List[str] = []
+    invalid_citation_ids: List[str] = []
+    for citation_id in citation_ids:
+        citation = lookup.get(citation_id.lower())
+        validation = citation_results.get(citation_id.lower())
+        if not citation or not validation or not validation.get("valid"):
+            invalid_citation_ids.append(citation_id)
+            continue
+        chunk = _chunk_by_citation(index, citation)
+        if not chunk:
+            invalid_citation_ids.append(citation_id)
+            continue
+        valid_citation_ids.append(citation_id.lower())
+        evidence_texts.append(str(chunk.get("content", "")))
+        evidence_texts.append(str(chunk.get("document_ref", "")))
+
+    if invalid_citation_ids:
+        return {
+            "support_status": "unsupported",
+            "unsupported_reason": "invalid_claim_citation:" + ",".join(sorted(invalid_citation_ids)),
+            "supporting_citation_ids": valid_citation_ids,
+            "matched_terms": [],
+            "coverage_ratio": 0.0,
+        }
+    if not evidence_texts:
+        return {
+            "support_status": "unsupported",
+            "unsupported_reason": "unresolved_claim_evidence",
+            "supporting_citation_ids": valid_citation_ids,
+            "matched_terms": [],
+            "coverage_ratio": 0.0,
+        }
+
+    claim_normalized = _normalize_claim_text(claim_text)
+    evidence_normalized = _normalize_claim_text(" ".join(evidence_texts))
+    claim_terms = set(_claim_terms(claim_normalized))
+    evidence_terms = set(_claim_terms(evidence_normalized))
+    matched = sorted(claim_terms.intersection(evidence_terms))
+    coverage_ratio = len(matched) / len(claim_terms) if claim_terms else 1.0
+
+    if claim_normalized and claim_normalized in evidence_normalized:
+        status = "direct_quote_or_near_quote"
+        reason = None
+    elif claim_terms and coverage_ratio >= 0.6 and len(matched) >= min(2, len(claim_terms)):
+        status = "lexical_overlap"
+        reason = None
+    elif valid_citation_ids:
+        status = "locator_only_weak"
+        reason = "weak_lexical_support"
+    else:
+        status = "unsupported"
+        reason = "no_valid_claim_support"
+
+    return {
+        "support_status": status,
+        "unsupported_reason": reason,
+        "supporting_citation_ids": valid_citation_ids,
+        "matched_terms": matched[:20],
+        "coverage_ratio": coverage_ratio,
+    }
+
+
+def claim_support_report(
     *,
     answer_text: str,
     citations: Sequence[Mapping[str, Any]],
     index: Mapping[str, Any],
+    citation_validation: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    answer_terms = set(_query_terms(answer_text))
-    chunk_terms = set()
-    resolved = 0
-    for citation in citations:
-        chunk = _chunk_by_citation(index, citation)
-        if not chunk:
+    claims = extract_answer_claims(answer_text)
+    citation_results: Dict[str, Mapping[str, Any]] = {}
+    for citation, validation in zip(citations, citation_validation.get("results", [])):
+        citation_results[str(citation.get("citation_id", "")).lower()] = validation
+
+    checked_claims: List[Dict[str, Any]] = []
+    for claim in claims:
+        updated = dict(claim)
+        if not updated.get("requires_citation"):
+            updated["support_status"] = "not_checked"
+            checked_claims.append(updated)
             continue
-        resolved += 1
-        chunk_terms.update(_query_terms(str(chunk.get("content", ""))))
-    overlap = answer_terms.intersection(chunk_terms)
+        support = _direct_or_lexical_claim_support(
+            str(updated.get("claim_text", "")),
+            list(updated.get("supporting_citation_ids") or []),
+            citations,
+            index,
+            citation_results,
+        )
+        updated.update(support)
+        checked_claims.append(updated)
+
+    required_claims = [claim for claim in checked_claims if claim.get("requires_citation")]
+    supported_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") in PASSING_CLAIM_SUPPORT_LEVELS
+    ]
+    unsupported_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") not in PASSING_CLAIM_SUPPORT_LEVELS
+    ]
+    support_levels = {str(claim.get("support_status")) for claim in required_claims}
+    if not required_claims:
+        aggregate = "not_checked"
+    elif unsupported_claims:
+        aggregate = "unsupported"
+    elif "direct_quote_or_near_quote" in support_levels and len(support_levels) == 1:
+        aggregate = "direct_quote_or_near_quote"
+    else:
+        aggregate = "lexical_overlap"
     return {
+        "schema": CLAIM_SUPPORT_SCHEMA,
+        "claim_count": len(claims),
+        "claims_checked": len(required_claims),
+        "claims_supported": len(supported_claims),
+        "claims_unsupported": len(unsupported_claims),
+        "claim_support_level": aggregate,
+        "unsupported_claims": unsupported_claims,
+        "claims": checked_claims,
         "semantic_support_level": "lexical_or_locator_only",
-        "resolved_citation_count": resolved,
-        "answer_term_count": len(answer_terms),
-        "citation_term_count": len(chunk_terms),
-        "lexical_overlap_count": len(overlap),
-        "lexical_overlap_terms": sorted(overlap)[:20],
-        "supported": bool(overlap) or not answer_terms,
+        "semantic_truth_claim": "limited_or_none",
+        "quality_claim": "none",
     }
 
 
@@ -755,9 +939,17 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
     elif citations:
         failure_reasons.append("abstention_status_must_not_include_citations")
 
-    support = _lexical_support_for_answer(answer_text=answer_text, citations=citations, index=index)
-    if status in ANSWERED_STATUSES and not support.get("supported"):
-        failure_reasons.append("answer_lacks_lexical_overlap_with_citations")
+    support = claim_support_report(
+        answer_text=answer_text,
+        citations=citations,
+        index=index,
+        citation_validation=citation_validation,
+    )
+    if status in ANSWERED_STATUSES:
+        if support.get("claim_count", 0) <= 0:
+            failure_reasons.append("answered_status_requires_checkable_claim")
+        if support.get("claims_unsupported", 0) > 0:
+            failure_reasons.append("unsupported_claims_present")
 
     source_policy_status = "allowed"
     if citation_validation.get("results") and any(
@@ -768,17 +960,31 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
     elif status in {"unsupported_current_phase", "abstained_out_of_scope"}:
         source_policy_status = str(answer_payload.get("source_policy_status") or "out_of_scope")
 
+    valid_citation_count = sum(1 for item in citation_validation.get("results", []) if item.get("valid"))
+    resolved_citation_count = sum(
+        1 for item in citation_validation.get("results", [])
+        if item.get("locator_resolution_status") == "resolved"
+    )
     valid = not failure_reasons and (status in ABSTENTION_STATUSES or bool(citation_validation.get("valid")))
     return {
         "schema": ANSWER_VALIDATION_SCHEMA,
         "valid": valid,
+        "answer_verifier_valid": valid,
         "failure_reasons": sorted(set(failure_reasons)),
         "failure_reason": None if valid else ",".join(sorted(set(failure_reasons))),
         "answer_status": status,
         "citation_count": len(citations),
-        "resolved_citation_count": support.get("resolved_citation_count", 0),
+        "valid_citation_count": valid_citation_count,
+        "resolved_citation_count": resolved_citation_count,
         "citation_validation": citation_validation,
         "support_level": "lexical_or_locator_only" if citations else "none",
+        "claim_count": support.get("claim_count", 0),
+        "claims_checked": support.get("claims_checked", 0),
+        "claims_supported": support.get("claims_supported", 0),
+        "claims_unsupported": support.get("claims_unsupported", 0),
+        "claim_support_level": support.get("claim_support_level"),
+        "unsupported_claims": support.get("unsupported_claims", []),
+        "claim_support_report": support,
         "semantic_support_level": support.get("semantic_support_level"),
         "semantic_truth_claim": "limited_or_none",
         "source_policy_status": source_policy_status,

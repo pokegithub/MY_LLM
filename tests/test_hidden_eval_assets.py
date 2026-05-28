@@ -98,8 +98,13 @@ class HiddenEvalAssetTests(unittest.TestCase):
         self.assertEqual(report["counts"]["retrieval_supported"], 1)
         self.assertEqual(report["counts"]["citation_verifier_passed"], 1)
         self.assertEqual(report["counts"]["answer_verifier_passed"], 1)
+        self.assertEqual(report["counts"]["claim_verifier_passed"], 1)
+        self.assertEqual(report["counts"]["claims_unsupported"], 0)
         self.assertEqual(report["items"][0]["final_status"], "passed")
         self.assertEqual(report["items"][0]["answer_status"], "answered_with_citations")
+        self.assertGreater(report["items"][0]["claim_count"], 0)
+        self.assertEqual(report["items"][0]["claims_unsupported"], 0)
+        self.assertTrue(report["items"][0]["claim_verifier_passed"])
         self.assertTrue(report["items"][0]["private_target_used"])
         self.assertFalse(report["items"][0]["private_target_exposed_in_public_summary"])
 

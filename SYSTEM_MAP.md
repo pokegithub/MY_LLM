@@ -256,6 +256,15 @@
 - Hidden source-grounded/retrieval-grounded seed reports now include citation-verifier and answer-verifier results. Public summaries still omit answer text and private targets.
 - Citation validity and lexical support are not full semantic truth verification, and retrieval eval pass/fail is not a model-quality claim.
 
+### Phase A retrieval claim-support verifier update
+
+- Date: 2026-05-26
+- Scope: Strengthened the local retrieval answer verifier with deterministic sentence/claim-level support checks. This remains local lexical repo-doc retrieval only; it is not web retrieval, vector search, embeddings, semantic memory, model training, or full semantic entailment.
+- Cited answers are split into checkable claim records. Required factual claims must carry citation markers, resolve to valid allowed citations, and show direct quote/near-quote or lexical-overlap support from the cited snippet.
+- Unsupported or weak locator-only claims are reported explicitly via claim counts, support levels, and unsupported-claim records. Fully answered status is not valid when required claims lack support.
+- Hidden source-grounded/retrieval-grounded reports now include claim-verifier status and claim-support counts while continuing to omit private targets and answer keys from public summaries.
+- `semantic_truth_claim` remains `limited_or_none`; claim-level lexical support is stronger than citation presence alone but still not a proof of semantic truth or model quality.
+
 ---
 
 ## 1. Crawl Scope and Ground Truth
