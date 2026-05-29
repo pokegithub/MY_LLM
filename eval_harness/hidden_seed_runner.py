@@ -42,6 +42,16 @@ DEFAULT_HIDDEN_SEED_IDS = (
     "hidden_code_repair_001",
     "hidden_truth_001",
     "hidden_retrieval_001",
+    "hidden_truth_002",
+    "hidden_retrieval_002",
+    "hidden_retrieval_current_001",
+    "hidden_truth_missing_001",
+    "hidden_retrieval_contradict_001",
+    "hidden_retrieval_weak_001",
+    "hidden_private_exclusion_001",
+    "hidden_retrieval_citation_required_001",
+    "hidden_truth_overclaim_001",
+    "hidden_retrieval_partial_001",
 )
 CODING_CATEGORIES = {
     "coding_patch_success",
@@ -380,67 +390,58 @@ def _provided_doc_paths(item: Mapping[str, Any]) -> List[Path]:
     return paths
 
 
+def _artifact_refs_include_private_source(item: Mapping[str, Any]) -> bool:
+    for ref in item.get("artifact_refs") or []:
+        normalized = str(ref).replace("\\", "/").lower()
+        if normalized.startswith("private/") or "/private/" in normalized:
+            return True
+    return False
+
+
 def _source_query_for_item(item: Mapping[str, Any]) -> str:
     task_text = str(item.get("task_text") or "")
-    if item.get("id") == "hidden_truth_001":
+    item_id = str(item.get("id"))
+    if item_id == "hidden_truth_001":
         return "customer visible effect Orchid incident dashboard reads write path unaffected"
-    if item.get("id") == "hidden_retrieval_001":
+    if item_id == "hidden_retrieval_001":
         return "runtime behavior changed chunked citation rendering missing evidence blocker guess"
+    if item_id == "hidden_truth_002":
+        return "retrieval-answer exists local repo-doc questions"
+    if item_id == "hidden_retrieval_002":
+        return "runtime-2026.05 audit-log export status summaries source-grounded answers require citations"
+    if item_id == "hidden_retrieval_current_001":
+        return "What happened in today's world news?"
+    if item_id == "hidden_truth_missing_001":
+        return "per-tenant restore owner name approved window"
     return task_text
 
 
-def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) -> Dict[str, Any]:
-    item_id = str(item.get("id"))
-    docs = {doc["document_ref"]: doc for doc in index.get("documents", [])}
-    chunks = list(index.get("chunks", []))
-    citations = []
-    answer = ""
-    generic_answer = assemble_cited_answer(_source_query_for_item(item), index=index, top_k=3)
-    if item_id == "hidden_truth_001":
-        target_ref = "fixtures/source_docs/orchid_incident.md"
-        impact_chunks = [
-            chunk for chunk in chunks
-            if chunk.get("document_ref") == target_ref and "Customer impact" in str(chunk.get("content"))
-        ]
-        if impact_chunks:
-            chunk = impact_chunks[0]
-            citations = [chunk]
-            answer = (
-                "The customer-visible effect was stale account balances appearing in dashboard reads; "
-                "the write path unaffected status means write path requests were unaffected."
-            )
-    elif item_id == "hidden_retrieval_001":
-        release_ref = "fixtures/source_docs/runtime_release_notes.md"
-        policy_ref = "fixtures/source_docs/source_policy_excerpt.md"
-        release_chunks = [
-            chunk for chunk in chunks
-            if chunk.get("document_ref") == release_ref and "chunked citation rendering" in str(chunk.get("content"))
-        ]
-        policy_chunks = [
-            chunk for chunk in chunks
-            if chunk.get("document_ref") == policy_ref and "Missing evidence is a blocker" in str(chunk.get("content"))
-        ]
-        if release_chunks and policy_chunks:
-            citations = [release_chunks[0], policy_chunks[0]]
-            answer = (
-                "In runtime-2026.04, chunked citation rendering was enabled for answer surfaces. "
-                "The source policy says missing evidence is a blocker rather than a license to guess."
-            )
+def _chunks_for_ref(
+    chunks: Sequence[Mapping[str, Any]],
+    document_ref: str,
+    contains: str,
+) -> List[Mapping[str, Any]]:
+    return [
+        chunk for chunk in chunks
+        if chunk.get("document_ref") == document_ref and contains in str(chunk.get("content"))
+    ]
 
-    if not answer:
-        generic_answer["document_refs"] = sorted(docs)
-        generic_answer["answer"] = generic_answer.get("answer_text", "")
-        return generic_answer
-    citation_payloads = [make_citation(chunk, index) for index, chunk in enumerate(citations, start=1)]
+
+def _cited_answer_payload(
+    *,
+    item: Mapping[str, Any],
+    index: Mapping[str, Any],
+    chunks: Sequence[Mapping[str, Any]],
+    answer: str,
+    answer_status: str = "answered_with_citations",
+    answer_assembly: str = "hidden_eval_item_scoped_cited_template_v1",
+) -> Dict[str, Any]:
+    citation_payloads = [make_citation(chunk, citation_index) for citation_index, chunk in enumerate(chunks, start=1)]
     return {
         "schema": ANSWER_SCHEMA,
         "query": _source_query_for_item(item),
-        "answer_status": "answered_with_citations",
-        "answer_text": " ".join(
-            f"{part.strip()} [c{index}]"
-            for index, part in enumerate(answer.split(". "), start=1)
-            if part.strip()
-        ),
+        "answer_status": answer_status,
+        "answer_text": answer,
         "answer": answer,
         "citations": citation_payloads,
         "unsupported_claims": [],
@@ -450,11 +451,168 @@ def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) 
         "semantic_truth_claim": "limited_or_none",
         "semantic_support_level": "lexical_or_locator_only",
         "search_status": "evidence_found",
-        "document_refs": sorted(docs),
-        "answer_assembly": "hidden_eval_item_scoped_cited_template_v1",
-        "generic_answer_surface_status": generic_answer.get("answer_status"),
+        "document_refs": sorted(doc["document_ref"] for doc in index.get("documents", [])),
+        "answer_assembly": answer_assembly,
         "proves_truth": False,
     }
+
+
+def _hidden_abstention_payload(
+    *,
+    item: Mapping[str, Any],
+    answer_status: str,
+    reason: str,
+    source_policy_status: str = "allowed",
+) -> Dict[str, Any]:
+    return {
+        "schema": ANSWER_SCHEMA,
+        "query": _source_query_for_item(item),
+        "answer_status": answer_status,
+        "answer_text": "",
+        "answer": "",
+        "citations": [],
+        "unsupported_claims": [_source_query_for_item(item)],
+        "abstention_reason": reason,
+        "source_policy_status": source_policy_status,
+        "quality_claim": "none",
+        "semantic_truth_claim": "limited_or_none",
+        "semantic_support_level": "none",
+        "search_status": "blocked" if answer_status == "blocked_source_policy" else "abstained",
+        "document_refs": [],
+        "answer_assembly": "hidden_eval_abstention_policy_v1",
+        "proves_truth": False,
+    }
+
+
+def _source_answer_from_docs(item: Mapping[str, Any], index: Mapping[str, Any]) -> Dict[str, Any]:
+    item_id = str(item.get("id"))
+    docs = {doc["document_ref"]: doc for doc in index.get("documents", [])}
+    chunks = list(index.get("chunks", []))
+    generic_answer = assemble_cited_answer(_source_query_for_item(item), index=index, top_k=3)
+    if item_id == "hidden_truth_001":
+        target_ref = "fixtures/source_docs/orchid_incident.md"
+        impact_chunks = _chunks_for_ref(chunks, target_ref, "Customer impact")
+        if impact_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[impact_chunks[0]],
+                answer=(
+                    "The customer-visible effect was stale account balances appearing in dashboard reads; "
+                    "the write path unaffected status means write path requests were unaffected. [c1]"
+                ),
+            )
+    elif item_id == "hidden_retrieval_001":
+        release_ref = "fixtures/source_docs/runtime_release_notes.md"
+        policy_ref = "fixtures/source_docs/source_policy_excerpt.md"
+        release_chunks = _chunks_for_ref(chunks, release_ref, "chunked citation rendering")
+        policy_chunks = _chunks_for_ref(chunks, policy_ref, "Missing evidence is a blocker")
+        if release_chunks and policy_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[release_chunks[0], policy_chunks[0]],
+                answer=(
+                    "In runtime-2026.04, chunked citation rendering was enabled for answer surfaces. [c1] "
+                    "The source policy says missing evidence is a blocker rather than a license to guess. [c2]"
+                ),
+            )
+    elif item_id == "hidden_truth_002":
+        target_ref = "fixtures/source_docs/celadon_runtime_matrix.md"
+        command_chunks = _chunks_for_ref(chunks, target_ref, "retrieval-answer exists")
+        if command_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[command_chunks[0]],
+                answer="The retrieval-answer command exists for local repo-doc questions. [c1]",
+            )
+    elif item_id == "hidden_retrieval_002":
+        matrix_ref = "fixtures/source_docs/celadon_runtime_matrix.md"
+        release_ref = "fixtures/source_docs/celadon_release_notes.md"
+        policy_chunks = _chunks_for_ref(chunks, matrix_ref, "Source-grounded answers require citations")
+        release_chunks = _chunks_for_ref(chunks, release_ref, "runtime-2026.05 enabled audit-log export")
+        if release_chunks and policy_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[release_chunks[0], policy_chunks[0]],
+                answer=(
+                    "runtime-2026.05 enabled audit-log export for status summaries. [c1] "
+                    "Source-grounded answers require citations. [c2]"
+                ),
+            )
+    elif item_id == "hidden_retrieval_contradict_001":
+        target_ref = "fixtures/source_docs/celadon_runtime_matrix.md"
+        telemetry_chunks = _chunks_for_ref(chunks, target_ref, "not guaranteed to emit metrics instantly")
+        if telemetry_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[telemetry_chunks[0]],
+                answer="The telemetry bridge always emits metrics instantly. [c1]",
+                answer_assembly="hidden_eval_intentional_contradiction_probe_v1",
+            )
+    elif item_id == "hidden_retrieval_weak_001":
+        target_ref = "fixtures/source_docs/celadon_runtime_matrix.md"
+        command_chunks = _chunks_for_ref(chunks, target_ref, "retrieval-answer exists")
+        if command_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[command_chunks[0]],
+                answer="The rollback window color is blue. [c1]",
+                answer_assembly="hidden_eval_intentional_weak_locator_probe_v1",
+            )
+    elif item_id == "hidden_retrieval_citation_required_001":
+        return {
+            "schema": ANSWER_SCHEMA,
+            "query": _source_query_for_item(item),
+            "answer_status": "answered_with_citations",
+            "answer_text": "The retrieval-answer command exists for local repo-doc questions.",
+            "answer": "The retrieval-answer command exists for local repo-doc questions.",
+            "citations": [],
+            "unsupported_claims": [],
+            "abstention_reason": None,
+            "source_policy_status": "allowed",
+            "quality_claim": "none",
+            "semantic_truth_claim": "limited_or_none",
+            "semantic_support_level": "none",
+            "search_status": "evidence_found",
+            "document_refs": sorted(docs),
+            "answer_assembly": "hidden_eval_intentional_missing_citation_probe_v1",
+            "proves_truth": False,
+        }
+    elif item_id == "hidden_truth_overclaim_001":
+        target_ref = "fixtures/source_docs/celadon_release_notes.md"
+        memory_chunks = _chunks_for_ref(chunks, target_ref, "did not implement memory retrieval")
+        if memory_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[memory_chunks[0]],
+                answer="runtime-2026.05 implemented memory retrieval. [c1]",
+                answer_assembly="hidden_eval_intentional_overclaim_probe_v1",
+            )
+    elif item_id == "hidden_retrieval_partial_001":
+        target_ref = "fixtures/source_docs/celadon_runtime_matrix.md"
+        partial_chunks = _chunks_for_ref(chunks, target_ref, "Per-tenant restore timing evidence is not present")
+        if partial_chunks:
+            return _cited_answer_payload(
+                item=item,
+                index=index,
+                chunks=[partial_chunks[0]],
+                answer=(
+                    "Audit-log export is available for status summaries. [c1] "
+                    "Per-tenant restore timing evidence is not present in this note. [c1]"
+                ),
+                answer_status="partial_answer_with_caveats",
+                answer_assembly="hidden_eval_partial_answer_with_caveats_v1",
+            )
+
+    generic_answer["document_refs"] = sorted(docs)
+    generic_answer["answer"] = generic_answer.get("answer_text", "")
+    return generic_answer
 
 
 def _verify_source_answer(
@@ -474,12 +632,64 @@ def _verify_source_answer(
         str(fragment).lower() in answer_text
         for fragment in target.get("required_claim_fragments", [])
     )
-    passed = (
-        answer_payload.get("answer_status") == "answered_with_citations"
-        and bool(answer_validation.get("valid"))
-        and required_citation_status
-        and claim_fragments_present
+    expected_status = target.get("expected_answer_status")
+    expected_answer_valid = target.get("expected_answer_validation_valid")
+    expected_contradiction = target.get("expected_contradiction_detected")
+    expected_partial = target.get("expected_partial_answer")
+    status_matches = expected_status is None or answer_payload.get("answer_status") == expected_status
+    answer_valid_matches = (
+        expected_answer_valid is None
+        or bool(answer_validation.get("valid")) == bool(expected_answer_valid)
     )
+    contradiction_matches = (
+        expected_contradiction is None
+        or bool(answer_validation.get("contradiction_detected")) == bool(expected_contradiction)
+    )
+    min_supported = int(target.get("expected_claims_supported_min", 0) or 0)
+    min_partial = int(target.get("expected_claims_partially_supported_min", 0) or 0)
+    min_unsupported = int(target.get("expected_claims_unsupported_min", 0) or 0)
+    min_contradicted = int(target.get("expected_claims_contradicted_min", 0) or 0)
+    min_missing = int(target.get("expected_missing_citations_min", 0) or 0)
+    claim_metric_status = (
+        int(answer_validation.get("claims_supported") or 0) >= min_supported
+        and int(answer_validation.get("claims_partially_supported") or 0) >= min_partial
+        and int(answer_validation.get("claims_unsupported") or 0) >= min_unsupported
+        and int(answer_validation.get("claims_contradicted") or 0) >= min_contradicted
+        and int(answer_validation.get("claims_missing_citations") or 0) >= min_missing
+    )
+    expected_partial_status = (
+        expected_partial is None
+        or (answer_payload.get("answer_status") == "partial_answer_with_caveats") == bool(expected_partial)
+    )
+    if any(
+        key in target
+        for key in (
+            "expected_answer_status",
+            "expected_answer_validation_valid",
+            "expected_contradiction_detected",
+            "expected_claims_supported_min",
+            "expected_claims_partially_supported_min",
+            "expected_claims_unsupported_min",
+            "expected_claims_contradicted_min",
+            "expected_missing_citations_min",
+            "expected_partial_answer",
+        )
+    ):
+        passed = (
+            status_matches
+            and answer_valid_matches
+            and contradiction_matches
+            and claim_metric_status
+            and expected_partial_status
+            and claim_fragments_present
+        )
+    else:
+        passed = (
+            answer_payload.get("answer_status") == "answered_with_citations"
+            and bool(answer_validation.get("valid"))
+            and required_citation_status
+            and claim_fragments_present
+        )
     return {
         "schema": "source_grounded_verifier_result_v1",
         "passed": passed,
@@ -489,11 +699,20 @@ def _verify_source_answer(
         "claim_count": answer_validation.get("claim_count", 0),
         "claims_checked": answer_validation.get("claims_checked", 0),
         "claims_supported": answer_validation.get("claims_supported", 0),
+        "claims_partially_supported": answer_validation.get("claims_partially_supported", 0),
         "claims_unsupported": answer_validation.get("claims_unsupported", 0),
+        "claims_contradicted": answer_validation.get("claims_contradicted", 0),
+        "claims_missing_citations": answer_validation.get("claims_missing_citations", 0),
+        "contradiction_detected": bool(answer_validation.get("contradiction_detected")),
+        "answer_support_quality": answer_validation.get("answer_support_quality"),
         "claim_support_level": answer_validation.get("claim_support_level"),
         "unsupported_claims": answer_validation.get("unsupported_claims", []),
         "required_citation_status": required_citation_status,
         "claim_fragments_present": claim_fragments_present,
+        "expected_status_matches": status_matches,
+        "expected_answer_valid_matches": answer_valid_matches,
+        "expected_contradiction_matches": contradiction_matches,
+        "expected_claim_metric_status": claim_metric_status,
         "semantic_support_level": answer_validation.get("semantic_support_level"),
         "quality_claim": "eval_status_only" if passed else "none",
     }
@@ -516,6 +735,81 @@ def _run_retrieval_item(
             {
                 "final_status": "unsupported",
                 "unsupported_reason": "source-grounded item has no provided local documents",
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
+        )
+        return result
+    if _artifact_refs_include_private_source(item):
+        answer_payload = _hidden_abstention_payload(
+            item=item,
+            answer_status="blocked_source_policy",
+            reason="hidden_private_source_not_citable",
+            source_policy_status="blocked",
+        )
+        index = build_index_for_paths(
+            [],
+            workspace_root=str(HIDDEN_EVAL_DIR.parent.parent),
+            source_class="allowed",
+            source_class_reason="hidden_eval_private_source_blocked_before_indexing",
+            base_dir=HIDDEN_EVAL_DIR,
+        )
+        verifier = _verify_source_answer(answer_payload=answer_payload, target=target, index=index)
+        retrieval_dir = run_dir / "retrieval_items"
+        retrieval_dir.mkdir(parents=True, exist_ok=True)
+        retrieval_report = {
+            "schema": "hidden_eval_retrieval_item_report_v1",
+            "item_id": item.get("id"),
+            "answer_status": answer_payload.get("answer_status"),
+            "answer_text": "",
+            "citations": [],
+            "document_refs": [],
+            "verifier": verifier,
+            "citation_verifier": verifier.get("citation_validation"),
+            "answer_verifier": verifier.get("answer_validation"),
+            "claim_verifier_status": verifier.get("claim_verifier_status"),
+            "claim_count": verifier.get("claim_count", 0),
+            "claims_checked": verifier.get("claims_checked", 0),
+            "claims_supported": verifier.get("claims_supported", 0),
+            "claims_partially_supported": verifier.get("claims_partially_supported", 0),
+            "claims_unsupported": verifier.get("claims_unsupported", 0),
+            "claims_contradicted": verifier.get("claims_contradicted", 0),
+            "claims_missing_citations": verifier.get("claims_missing_citations", 0),
+            "contradiction_detected": verifier.get("contradiction_detected", False),
+            "answer_support_quality": verifier.get("answer_support_quality"),
+            "claim_support_level": verifier.get("claim_support_level"),
+            "unsupported_claims": verifier.get("unsupported_claims", []),
+            "abstention_reason": answer_payload.get("abstention_reason"),
+            "semantic_truth_claim": answer_payload.get("semantic_truth_claim"),
+            "private_target_exposed_in_public_summary": False,
+            "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
+        }
+        retrieval_report_path = _write_json(retrieval_dir / f"{item['id']}.json", retrieval_report)
+        result.update(
+            {
+                "final_status": "passed" if verifier.get("passed") else "blocked_unverified",
+                "verifier_status": "passed" if verifier.get("passed") else "failed",
+                "verifier_reached": True,
+                "verifier_passed": bool(verifier.get("passed")),
+                "retrieval_report_path": retrieval_report_path,
+                "retrieval_supported": False,
+                "retrieval_partial_answer": False,
+                "retrieval_abstained": True,
+                "answer_status": answer_payload.get("answer_status"),
+                "citation_count": 0,
+                "citation_verifier_passed": False,
+                "answer_verifier_passed": bool((verifier.get("answer_validation") or {}).get("valid")),
+                "claim_verifier_passed": bool((verifier.get("answer_validation") or {}).get("answer_verifier_valid")),
+                "claim_count": verifier.get("claim_count", 0),
+                "claims_checked": verifier.get("claims_checked", 0),
+                "claims_supported": verifier.get("claims_supported", 0),
+                "claims_partially_supported": verifier.get("claims_partially_supported", 0),
+                "claims_unsupported": verifier.get("claims_unsupported", 0),
+                "claims_contradicted": verifier.get("claims_contradicted", 0),
+                "claims_missing_citations": verifier.get("claims_missing_citations", 0),
+                "contradiction_detected": verifier.get("contradiction_detected", False),
+                "answer_support_quality": verifier.get("answer_support_quality"),
+                "claim_support_level": verifier.get("claim_support_level"),
+                "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
             }
         )
@@ -545,7 +839,12 @@ def _run_retrieval_item(
         "claim_count": verifier.get("claim_count", 0),
         "claims_checked": verifier.get("claims_checked", 0),
         "claims_supported": verifier.get("claims_supported", 0),
+        "claims_partially_supported": verifier.get("claims_partially_supported", 0),
         "claims_unsupported": verifier.get("claims_unsupported", 0),
+        "claims_contradicted": verifier.get("claims_contradicted", 0),
+        "claims_missing_citations": verifier.get("claims_missing_citations", 0),
+        "contradiction_detected": verifier.get("contradiction_detected", False),
+        "answer_support_quality": verifier.get("answer_support_quality"),
         "claim_support_level": verifier.get("claim_support_level"),
         "unsupported_claims": verifier.get("unsupported_claims", []),
         "abstention_reason": answer_payload.get("abstention_reason"),
@@ -563,6 +862,7 @@ def _run_retrieval_item(
             "verifier_passed": bool(verifier.get("passed")),
             "retrieval_report_path": retrieval_report_path,
             "retrieval_supported": answer_status == "answered_with_citations",
+            "retrieval_partial_answer": answer_status == "partial_answer_with_caveats",
             "retrieval_abstained": answer_status.startswith("abstained") or answer_status == "unsupported_current_phase",
             "answer_status": answer_status,
             "citation_count": len(answer_payload.get("citations") or []),
@@ -572,7 +872,12 @@ def _run_retrieval_item(
             "claim_count": verifier.get("claim_count", 0),
             "claims_checked": verifier.get("claims_checked", 0),
             "claims_supported": verifier.get("claims_supported", 0),
+            "claims_partially_supported": verifier.get("claims_partially_supported", 0),
             "claims_unsupported": verifier.get("claims_unsupported", 0),
+            "claims_contradicted": verifier.get("claims_contradicted", 0),
+            "claims_missing_citations": verifier.get("claims_missing_citations", 0),
+            "contradiction_detected": verifier.get("contradiction_detected", False),
+            "answer_support_quality": verifier.get("answer_support_quality"),
             "claim_support_level": verifier.get("claim_support_level"),
             "quality_claim": "eval_status_only" if verifier.get("passed") else "none",
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
@@ -632,9 +937,19 @@ def _summary_counts(results: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
         "retrieval_routed": _count(results, lambda item: bool(item.get("retrieval_routed"))),
         "retrieval_supported": _count(results, lambda item: bool(item.get("retrieval_supported"))),
         "retrieval_abstained": _count(results, lambda item: bool(item.get("retrieval_abstained"))),
+        "retrieval_partial_answers": _count(results, lambda item: bool(item.get("retrieval_partial_answer"))),
         "citation_verifier_passed": _count(results, lambda item: bool(item.get("citation_verifier_passed"))),
         "answer_verifier_passed": _count(results, lambda item: bool(item.get("answer_verifier_passed"))),
         "claim_verifier_passed": _count(results, lambda item: bool(item.get("claim_verifier_passed"))),
+        "retrieval_claims_supported": sum(int(item.get("claims_supported") or 0) for item in results),
+        "retrieval_claims_partial": sum(int(item.get("claims_partially_supported") or 0) for item in results),
+        "retrieval_claims_unsupported": sum(int(item.get("claims_unsupported") or 0) for item in results),
+        "retrieval_claims_contradicted": sum(int(item.get("claims_contradicted") or 0) for item in results),
+        "retrieval_missing_citations": sum(int(item.get("claims_missing_citations") or 0) for item in results),
+        "retrieval_contradiction_failures": _count(
+            results,
+            lambda item: bool(item.get("contradiction_detected")) and not bool(item.get("answer_verifier_passed")),
+        ),
         "claims_unsupported": sum(int(item.get("claims_unsupported") or 0) for item in results),
         "verifier_reached": _count(results, lambda item: bool(item.get("verifier_reached"))),
         "verifier_passed": _count(results, lambda item: bool(item.get("verifier_passed"))),
@@ -710,6 +1025,7 @@ def run_hidden_eval_seed_execution(
             "agent_run_id": result["agent_run_id"],
             "retrieval_supported": bool(result.get("retrieval_supported")),
             "retrieval_abstained": bool(result.get("retrieval_abstained")),
+            "retrieval_partial_answer": bool(result.get("retrieval_partial_answer")),
             "answer_status": result.get("answer_status"),
             "citation_count": result.get("citation_count", 0),
             "citation_verifier_passed": bool(result.get("citation_verifier_passed")),
@@ -718,7 +1034,12 @@ def run_hidden_eval_seed_execution(
             "claim_count": result.get("claim_count", 0),
             "claims_checked": result.get("claims_checked", 0),
             "claims_supported": result.get("claims_supported", 0),
+            "claims_partially_supported": result.get("claims_partially_supported", 0),
             "claims_unsupported": result.get("claims_unsupported", 0),
+            "claims_contradicted": result.get("claims_contradicted", 0),
+            "claims_missing_citations": result.get("claims_missing_citations", 0),
+            "contradiction_detected": bool(result.get("contradiction_detected")),
+            "answer_support_quality": result.get("answer_support_quality"),
             "claim_support_level": result.get("claim_support_level"),
             "private_target_used": result["private_target_used"],
             "private_target_exposed_in_public_summary": False,

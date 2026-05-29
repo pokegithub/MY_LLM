@@ -24,7 +24,7 @@ class HiddenEvalAssetTests(unittest.TestCase):
     def test_hidden_eval_artifacts_exist_and_validate(self):
         report = validate_hidden_eval_assets()
         self.assertEqual(report["schema"], "hidden_eval_asset_validation_v1")
-        self.assertEqual(report["item_count"], 9)
+        self.assertEqual(report["item_count"], 19)
         self.assertGreater(report["split_counts"]["frozen"], 0)
         self.assertGreater(report["split_counts"]["rotating"], 0)
 
@@ -107,6 +107,34 @@ class HiddenEvalAssetTests(unittest.TestCase):
         self.assertTrue(report["items"][0]["claim_verifier_passed"])
         self.assertTrue(report["items"][0]["private_target_used"])
         self.assertFalse(report["items"][0]["private_target_exposed_in_public_summary"])
+
+    def test_hidden_eval_expanded_retrieval_failure_modes_are_reported(self):
+        with tempfile.TemporaryDirectory() as td:
+            report = run_hidden_eval_seed_execution(
+                seed_ids=(
+                    "hidden_retrieval_contradict_001",
+                    "hidden_retrieval_weak_001",
+                    "hidden_retrieval_citation_required_001",
+                    "hidden_private_exclusion_001",
+                    "hidden_retrieval_partial_001",
+                ),
+                workspace_root=".",
+                backend_config_path=os.path.join(td, "missing_qwen_config.json"),
+                output_root=os.path.join(td, "hidden_eval_runs"),
+                use_default_agent_report_dir=False,
+            )
+
+        self.assertEqual(report["counts"]["retrieval_routed"], 5)
+        self.assertEqual(report["counts"]["passed"], 5)
+        self.assertGreaterEqual(report["counts"]["retrieval_claims_partial"], 1)
+        self.assertGreaterEqual(report["counts"]["retrieval_claims_contradicted"], 1)
+        self.assertGreaterEqual(report["counts"]["retrieval_missing_citations"], 1)
+        self.assertEqual(report["counts"]["retrieval_partial_answers"], 1)
+        self.assertFalse(report["private_target_exposed_in_public_summary"])
+        by_id = {item["item_id"]: item for item in report["items"]}
+        self.assertTrue(by_id["hidden_retrieval_contradict_001"]["contradiction_detected"])
+        self.assertEqual(by_id["hidden_private_exclusion_001"]["answer_status"], "blocked_source_policy")
+        self.assertEqual(by_id["hidden_retrieval_partial_001"]["answer_status"], "partial_answer_with_caveats")
 
     def test_hidden_eval_public_summary_does_not_expose_private_targets(self):
         with tempfile.TemporaryDirectory() as td:

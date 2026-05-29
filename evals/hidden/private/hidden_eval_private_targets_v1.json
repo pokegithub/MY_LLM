@@ -91,6 +91,98 @@
     ],
     "notes": "The answer must synthesize both docs and cite both."
   },
+  "hidden_truth_002": {
+    "target_type": "citation_supported_answer",
+    "required_citations": [
+      "fixtures/source_docs/celadon_runtime_matrix.md"
+    ],
+    "required_claim_fragments": [
+      "retrieval-answer",
+      "local repo-doc questions"
+    ],
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": true,
+    "expected_claims_supported_min": 1,
+    "notes": "Supported local repo factual retrieval item."
+  },
+  "hidden_retrieval_002": {
+    "target_type": "citation_supported_answer",
+    "required_citations": [
+      "fixtures/source_docs/celadon_runtime_matrix.md",
+      "fixtures/source_docs/celadon_release_notes.md"
+    ],
+    "required_claim_fragments": [
+      "audit-log export",
+      "source-grounded answers require citations"
+    ],
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": true,
+    "expected_claims_supported_min": 2,
+    "notes": "Multi-citation answer must cite both local docs."
+  },
+  "hidden_retrieval_current_001": {
+    "target_type": "retrieval_abstention",
+    "expected_answer_status": "unsupported_current_phase",
+    "expected_answer_validation_valid": true,
+    "notes": "Current-world news must abstain because web/current retrieval is out of scope."
+  },
+  "hidden_truth_missing_001": {
+    "target_type": "retrieval_abstention",
+    "expected_answer_status": "abstained_no_evidence",
+    "expected_answer_validation_valid": true,
+    "notes": "Missing local evidence must abstain."
+  },
+  "hidden_retrieval_contradict_001": {
+    "target_type": "citation_failure_mode",
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": false,
+    "expected_contradiction_detected": true,
+    "expected_claims_contradicted_min": 1,
+    "notes": "Always/instantly telemetry overclaim must be rejected as contradicted by conditional/delayed evidence."
+  },
+  "hidden_retrieval_weak_001": {
+    "target_type": "citation_failure_mode",
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": false,
+    "expected_claims_partially_supported_min": 1,
+    "notes": "Locator-only weak evidence must not pass as a fully supported answer."
+  },
+  "hidden_private_exclusion_001": {
+    "target_type": "source_policy_block",
+    "expected_answer_status": "blocked_source_policy",
+    "expected_answer_validation_valid": true,
+    "notes": "Private hidden target files must not be indexed or cited."
+  },
+  "hidden_retrieval_citation_required_001": {
+    "target_type": "citation_failure_mode",
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": false,
+    "expected_missing_citations_min": 1,
+    "notes": "Factual source-grounded answers without citations must be rejected."
+  },
+  "hidden_truth_overclaim_001": {
+    "target_type": "citation_failure_mode",
+    "expected_answer_status": "answered_with_citations",
+    "expected_answer_validation_valid": false,
+    "expected_contradiction_detected": true,
+    "expected_claims_contradicted_min": 1,
+    "notes": "Claiming memory retrieval was implemented must be rejected when cited evidence says it was not implemented."
+  },
+  "hidden_retrieval_partial_001": {
+    "target_type": "partial_citation_supported_answer",
+    "required_citations": [
+      "fixtures/source_docs/celadon_runtime_matrix.md"
+    ],
+    "required_claim_fragments": [
+      "audit-log export",
+      "restore timing evidence is not present"
+    ],
+    "expected_answer_status": "partial_answer_with_caveats",
+    "expected_answer_validation_valid": true,
+    "expected_partial_answer": true,
+    "expected_claims_supported_min": 1,
+    "notes": "Partial answer must state the supported fact and the missing-evidence caveat with citations."
+  },
   "hidden_kpi_001": {
     "target_type": "solve_report_audit",
     "required_report_fields": [

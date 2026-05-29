@@ -113,6 +113,7 @@ REQUIRED_CITATION_FIELDS = (
 )
 ALLOWED_LOCATOR_TYPES = {"line_range", "json_pointer", "section_heading"}
 PASSING_CLAIM_SUPPORT_LEVELS = {"direct_quote_or_near_quote", "lexical_overlap"}
+PARTIAL_CLAIM_SUPPORT_LEVELS = {"locator_only_weak"}
 
 
 def _repo_rel(path: Path, workspace_root: Path) -> str:
@@ -144,7 +145,7 @@ def _is_document_ref_blocked_for_citation(document_ref: str) -> Tuple[bool, Opti
     normalized = document_ref.replace("\\", "/").strip().lower()
     if not normalized:
         return True, "empty_document_ref"
-    if normalized.startswith("evals/hidden/private") or "/private/" in normalized:
+    if normalized.startswith("evals/hidden/private") or normalized.startswith("private/") or "/private/" in normalized:
         return True, "hidden_private_source_not_citable"
     for prefix in EXCLUDED_PREFIXES:
         if _is_prefix(normalized, prefix.lower()):
@@ -765,6 +766,100 @@ def _citation_lookup(citations: Sequence[Mapping[str, Any]]) -> Dict[str, Mappin
     return {str(citation.get("citation_id", "")).lower(): citation for citation in citations}
 
 
+def _contains_unnegated_word(text: str, words: Sequence[str]) -> bool:
+    for word in words:
+        pattern = re.compile(rf"\b{re.escape(word)}\b")
+        for match in pattern.finditer(text):
+            prefix = text[max(0, match.start() - 24):match.start()]
+            if not re.search(r"\b(no|not|never|without|missing|unsupported|unavailable|disabled|failed|blocked)\b", prefix):
+                return True
+    return False
+
+
+def _contradiction_subject_terms(text: str) -> set:
+    generic = {
+        "answer",
+        "answers",
+        "available",
+        "command",
+        "docs",
+        "document",
+        "enabled",
+        "exists",
+        "implemented",
+        "local",
+        "phase",
+        "question",
+        "questions",
+        "ready",
+        "repo",
+        "runtime",
+        "source",
+        "supported",
+    }
+    return set(_claim_terms(text)) - generic
+
+
+def _conservative_contradiction_reason(claim_normalized: str, evidence_normalized: str) -> Optional[str]:
+    """Return a narrow lexical contradiction reason, or None.
+
+    This is intentionally conservative. It catches a few high-risk overclaims
+    without pretending to perform semantic entailment.
+    """
+    absolute_markers = ("always", "guaranteed", "guarantees", "instantly", "immediately")
+    conditional_or_delay_markers = (
+        "may",
+        "might",
+        "optional",
+        "manually",
+        "not guaranteed",
+        "not always",
+        "delayed",
+        "delay",
+    )
+    if (
+        any(marker in claim_normalized for marker in absolute_markers)
+        and any(marker in evidence_normalized for marker in conditional_or_delay_markers)
+    ):
+        return "absolute_claim_conflicts_with_conditional_or_delayed_evidence"
+
+    positive_terms = (
+        "available",
+        "enabled",
+        "exists",
+        "implemented",
+        "passed",
+        "ready",
+        "supported",
+        "success",
+        "succeeded",
+    )
+    negative_phrases = (
+        "blocked",
+        "disabled",
+        "did not implement",
+        "does not exist",
+        "failed",
+        "must not",
+        "not available",
+        "not enabled",
+        "not implemented",
+        "not ready",
+        "not supported",
+        "unsupported",
+        "unavailable",
+    )
+    if _contains_unnegated_word(claim_normalized, positive_terms):
+        claim_subject_terms = _contradiction_subject_terms(claim_normalized)
+        for evidence_sentence in re.split(r"(?<=[.!?])\s+|\n+", evidence_normalized):
+            if not any(phrase in evidence_sentence for phrase in negative_phrases):
+                continue
+            sentence_subject_terms = _contradiction_subject_terms(evidence_sentence)
+            if claim_subject_terms.intersection(sentence_subject_terms):
+                return "positive_claim_conflicts_with_negative_evidence"
+    return None
+
+
 def _direct_or_lexical_claim_support(
     claim_text: str,
     citation_ids: Sequence[str],
@@ -775,7 +870,7 @@ def _direct_or_lexical_claim_support(
     lookup = _citation_lookup(citations)
     if not citation_ids:
         return {
-            "support_status": "unsupported",
+            "support_status": "citation_missing",
             "unsupported_reason": "missing_claim_citation",
             "supporting_citation_ids": [],
             "matched_terms": [],
@@ -822,8 +917,12 @@ def _direct_or_lexical_claim_support(
     evidence_terms = set(_claim_terms(evidence_normalized))
     matched = sorted(claim_terms.intersection(evidence_terms))
     coverage_ratio = len(matched) / len(claim_terms) if claim_terms else 1.0
+    contradiction_reason = _conservative_contradiction_reason(claim_normalized, evidence_normalized)
 
-    if claim_normalized and claim_normalized in evidence_normalized:
+    if contradiction_reason:
+        status = "contradicted"
+        reason = contradiction_reason
+    elif claim_normalized and claim_normalized in evidence_normalized:
         status = "direct_quote_or_near_quote"
         reason = None
     elif claim_terms and coverage_ratio >= 0.6 and len(matched) >= min(2, len(claim_terms)):
@@ -879,6 +978,22 @@ def claim_support_report(
         claim for claim in required_claims
         if claim.get("support_status") in PASSING_CLAIM_SUPPORT_LEVELS
     ]
+    partially_supported_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") in PARTIAL_CLAIM_SUPPORT_LEVELS
+    ]
+    contradicted_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") == "contradicted"
+    ]
+    missing_citation_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") == "citation_missing"
+    ]
+    strictly_unsupported_claims = [
+        claim for claim in required_claims
+        if claim.get("support_status") == "unsupported"
+    ]
     unsupported_claims = [
         claim for claim in required_claims
         if claim.get("support_status") not in PASSING_CLAIM_SUPPORT_LEVELS
@@ -886,20 +1001,38 @@ def claim_support_report(
     support_levels = {str(claim.get("support_status")) for claim in required_claims}
     if not required_claims:
         aggregate = "not_checked"
-    elif unsupported_claims:
+        answer_support_quality = "not_checked"
+    elif contradicted_claims:
+        aggregate = "contradicted"
+        answer_support_quality = "contradicted"
+    elif strictly_unsupported_claims or missing_citation_claims:
         aggregate = "unsupported"
+        answer_support_quality = "unsupported"
+    elif partially_supported_claims:
+        aggregate = "partial"
+        answer_support_quality = "partial"
     elif "direct_quote_or_near_quote" in support_levels and len(support_levels) == 1:
         aggregate = "direct_quote_or_near_quote"
+        answer_support_quality = "fully_supported"
     else:
         aggregate = "lexical_overlap"
+        answer_support_quality = "fully_supported"
     return {
         "schema": CLAIM_SUPPORT_SCHEMA,
         "claim_count": len(claims),
         "claims_checked": len(required_claims),
         "claims_supported": len(supported_claims),
-        "claims_unsupported": len(unsupported_claims),
+        "claims_partially_supported": len(partially_supported_claims),
+        "claims_unsupported": len(strictly_unsupported_claims),
+        "claims_contradicted": len(contradicted_claims),
+        "claims_missing_citations": len(missing_citation_claims),
+        "contradiction_detected": bool(contradicted_claims),
+        "answer_support_quality": answer_support_quality,
         "claim_support_level": aggregate,
         "unsupported_claims": unsupported_claims,
+        "partially_supported_claims": partially_supported_claims,
+        "contradicted_claims": contradicted_claims,
+        "missing_citation_claims": missing_citation_claims,
         "claims": checked_claims,
         "semantic_support_level": "lexical_or_locator_only",
         "semantic_truth_claim": "limited_or_none",
@@ -950,6 +1083,15 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
             failure_reasons.append("answered_status_requires_checkable_claim")
         if support.get("claims_unsupported", 0) > 0:
             failure_reasons.append("unsupported_claims_present")
+        if support.get("claims_missing_citations", 0) > 0:
+            failure_reasons.append("missing_claim_citations_present")
+        if support.get("claims_contradicted", 0) > 0:
+            failure_reasons.append("contradicted_claims_present")
+        if status == "answered_with_citations" and support.get("claims_partially_supported", 0) > 0:
+            failure_reasons.append("weak_claim_support_present")
+        if status == "partial_answer_with_caveats":
+            if support.get("claims_supported", 0) + support.get("claims_partially_supported", 0) <= 0:
+                failure_reasons.append("partial_answer_requires_some_supported_claim")
 
     source_policy_status = "allowed"
     if citation_validation.get("results") and any(
@@ -957,7 +1099,7 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
     ):
         source_policy_status = "blocked"
         failure_reasons.append("source_policy_blocked")
-    elif status in {"unsupported_current_phase", "abstained_out_of_scope"}:
+    elif status in {"unsupported_current_phase", "abstained_out_of_scope", "blocked_source_policy"}:
         source_policy_status = str(answer_payload.get("source_policy_status") or "out_of_scope")
 
     valid_citation_count = sum(1 for item in citation_validation.get("results", []) if item.get("valid"))
@@ -981,9 +1123,17 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
         "claim_count": support.get("claim_count", 0),
         "claims_checked": support.get("claims_checked", 0),
         "claims_supported": support.get("claims_supported", 0),
+        "claims_partially_supported": support.get("claims_partially_supported", 0),
         "claims_unsupported": support.get("claims_unsupported", 0),
+        "claims_contradicted": support.get("claims_contradicted", 0),
+        "claims_missing_citations": support.get("claims_missing_citations", 0),
+        "contradiction_detected": bool(support.get("contradiction_detected")),
+        "answer_support_quality": support.get("answer_support_quality"),
         "claim_support_level": support.get("claim_support_level"),
         "unsupported_claims": support.get("unsupported_claims", []),
+        "partially_supported_claims": support.get("partially_supported_claims", []),
+        "contradicted_claims": support.get("contradicted_claims", []),
+        "missing_citation_claims": support.get("missing_citation_claims", []),
         "claim_support_report": support,
         "semantic_support_level": support.get("semantic_support_level"),
         "semantic_truth_claim": "limited_or_none",

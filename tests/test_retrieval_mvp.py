@@ -148,20 +148,63 @@ class RetrievalMvpTests(unittest.TestCase):
         uncited["answer_text"] = answer["answer_text"] + " This sentence has no citation."
         uncited_validation = validate_cited_answer(uncited, index)
         self.assertFalse(uncited_validation["valid"])
-        self.assertIn("unsupported_claims_present", uncited_validation["failure_reasons"])
-        self.assertGreater(uncited_validation["claims_unsupported"], 0)
+        self.assertIn("missing_claim_citations_present", uncited_validation["failure_reasons"])
+        self.assertGreater(uncited_validation["claims_missing_citations"], 0)
 
         unsupported = dict(answer)
-        unsupported["answer_text"] = answer["answer_text"] + " The backend is production ready. [c1]"
+        unsupported["answer_text"] = answer["answer_text"] + " The backend color is blue. [c1]"
         unsupported_validation = validate_cited_answer(unsupported, index)
         self.assertFalse(unsupported_validation["valid"])
-        self.assertGreater(unsupported_validation["claims_unsupported"], 0)
+        self.assertGreater(unsupported_validation["claims_partially_supported"], 0)
+        self.assertIn("weak_claim_support_present", unsupported_validation["failure_reasons"])
         self.assertTrue(
             any(
                 claim.get("unsupported_reason") == "weak_lexical_support"
                 for claim in unsupported_validation["unsupported_claims"]
             )
         )
+
+    def test_claim_support_reports_contradictions_and_partial_answers(self):
+        with tempfile.TemporaryDirectory() as td:
+            doc_path = os.path.join(td, "source.md")
+            with open(doc_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "# Source\n\n"
+                    "- The telemetry bridge may emit delayed metrics during replay.\n"
+                    "- The telemetry bridge is not guaranteed to emit metrics instantly.\n"
+                    "- Audit-log export is available for status summaries.\n"
+                    "- Per-tenant restore timing evidence is not present in this note.\n"
+                )
+            index = build_index_for_paths([doc_path], workspace_root=td)
+            citation = search_index("telemetry bridge not guaranteed emit metrics instantly", index=index)["citations"][0]
+
+        contradicted = {
+            "schema": ANSWER_SCHEMA,
+            "query": "telemetry",
+            "answer_status": "answered_with_citations",
+            "answer_text": "The telemetry bridge always emits metrics instantly. [c1]",
+            "citations": [citation],
+            "unsupported_claims": [],
+            "abstention_reason": None,
+            "source_policy_status": "allowed",
+            "quality_claim": "none",
+            "semantic_truth_claim": "limited_or_none",
+        }
+        contradiction_validation = validate_cited_answer(contradicted, index)
+        self.assertFalse(contradiction_validation["valid"])
+        self.assertTrue(contradiction_validation["contradiction_detected"])
+        self.assertGreater(contradiction_validation["claims_contradicted"], 0)
+        self.assertIn("contradicted_claims_present", contradiction_validation["failure_reasons"])
+
+        partial = dict(contradicted)
+        partial["answer_status"] = "partial_answer_with_caveats"
+        partial["answer_text"] = (
+            "Audit-log export is available for status summaries. [c1] "
+            "Per-tenant restore timing evidence is not present in this note. [c1]"
+        )
+        partial_validation = validate_cited_answer(partial, index)
+        self.assertTrue(partial_validation["valid"])
+        self.assertEqual(partial_validation["answer_support_quality"], "fully_supported")
 
     def test_answer_surface_abstains_for_out_of_scope_and_does_not_invent(self):
         with tempfile.TemporaryDirectory() as td:

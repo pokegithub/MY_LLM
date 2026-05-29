@@ -13,12 +13,23 @@
 
 ### Last synchronization
 
-- Date: 2026-05-12
-- Scope: Inventory, command-surface, agent-subsystem synchronization, Phase A hidden-eval/governance artifacts, Phase A base-model bakeoff protocol artifacts, the Phase A backend integration planning artifacts, Phase A retrieval-design planning artifacts, Phase A trajectory-quality audit artifacts, the Phase A in-process Transformers backend MVP, the Phase A backend runtime/tiny-model smoke execution package, and the Phase A candidate shortlist/readiness package. This was not a brand-new full-model audit.
-- Module count: 90 Python modules.
+- Date: 2026-05-28
+- Scope: Documentation-only synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, and low-risk cleanup passes. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not change runtime behavior.
+- Module count: 101 tracked Python source files, including tests and hidden fixture modules; `.venv`, caches, checkpoints, downloaded models, and run artifacts are excluded.
+- Command count: 48 `run.py` commands from the current argparse command choices.
+- Recent maintenance reflected:
+  - `retrieval-answer` exists and uses local lexical repo-doc retrieval only.
+  - claim-level lexical support verification exists for cited answers and hidden retrieval/source eval reports.
+  - `compile-source` exists as a tracked-source-only compile helper and is not a replacement for full `python -m compileall -q .`.
+  - `evals/hidden/hidden_eval_seed_set_v1.jsonl` is now trackable despite the global `*.jsonl` ignore rule; hidden private targets remain separate.
+  - duplicated test-only fake Transformers scaffolding was moved into `tests/helpers/fake_transformers.py`.
+  - Qwen2.5-Coder 0.5B and 1.5B small-model smoke evidence exists, but both passed `0` backend-routed hidden coding verifier items.
+  - `model_selection/local_small_model_stop_go_memo_v1.md` records the local RTX 2050 stop/go decision: stop local small-model escalation for now and focus on retrieval/citation truthfulness.
+- Phase status: Phase A remains active. Phase B has not started. No training, SFT, DPO, RLVR, model-weight improvement, full 7B/14B bakeoff, legal-clearance claim, or SFT-positive trajectory dataset exists.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
   - The previously recorded 439,613,216 parameter count applies to the legacy experimental configuration, not the current default.
+  - Current repo status and tests must be checked by the verification commands for the current pass; this map is not itself runtime evidence.
 
 ### Pass 1 truthfulness update
 
@@ -144,7 +155,7 @@
 - `retrieval_design/retrieval_source_policy_v1.*` defines source classes and makes clear that repo-policy training allowance does not imply retrieval approval.
 - `retrieval_design/citation_contract_v1.*` defines a checkable citation structure and states that citations are evidence references, not proof by themselves.
 - `retrieval_design/retrieval_abstention_policy_v1.md`, `retrieval_design/retrieval_verifier_contract_v1.*`, and `retrieval_design/retrieval_benchmark_exclusion_policy_v1.md` define fallback behavior, verifier authority, and hidden/benchmark exclusion handling.
-- This package does not implement retrieval, vector search, web search, or memory.
+- This design package itself did not implement retrieval. Later Phase A packages implemented the narrow local lexical retrieval/citation path described below; vector search, web search, and memory remain unimplemented.
 
 ### Phase A trajectory quality audit update
 
@@ -192,7 +203,7 @@
 
 - Date: 2026-05-13
 - Scope: Added autonomous provisioning for a small, ungated instruction-following Transformers smoke candidate. This is not the 7B/14B bakeoff and does not select a model.
-- `agent-backend-provision-small-candidate` tries the allowlisted priority order `HuggingFaceTB/SmolLM2-135M-Instruct` first, then `Qwen/Qwen2.5-Coder-0.5B-Instruct`; unlisted model ids are rejected by default.
+- `agent-backend-provision-small-candidate` tries the allowlisted priority order `HuggingFaceTB/SmolLM2-135M-Instruct` first, then `Qwen/Qwen2.5-Coder-0.5B-Instruct`; `Qwen/Qwen2.5-Coder-1.5B-Instruct` is an explicit stronger small-candidate option. Unlisted model ids are rejected by default.
 - Provisioned small candidates are stored under `run_artifacts/local_models/` and written to `configs/backend_smoke_small_candidate.json` for local-only backend smoke.
 - `configs/backend_smoke_qwen2_5_coder_0_5b.json` is a dedicated local-only smoke config for the Qwen2.5-Coder 0.5B path when that small coding model is explicitly provisioned.
 - RTX 2050 4 GB remains appropriate for small smoke/integration checks, not full 7B/14B local bakeoff.
@@ -215,7 +226,7 @@
 - Scope: Added a narrow private hidden-eval seed execution path for Phase A smoke evidence. This is not the full 7B/14B bakeoff and does not train or tune the model.
 - New CLI command:
   - `hidden-eval-seed-run`
-- `eval_harness/hidden_seed_runner.py` runs a small selected seed subset, routes exact/checkable need-tool items deterministically, routes coding items through the configured backend and verifier, and marks retrieval/source-grounded categories unsupported until citation/retrieval implementation exists.
+- `eval_harness/hidden_seed_runner.py` runs a small selected seed subset, routes exact/checkable need-tool items deterministically, routes coding items through the configured backend and verifier, and routes retrieval/source-grounded categories through item-scoped local retrieval/citation evidence when supported.
 - Per-item and summary reports are written under `run_artifacts/hidden_eval_runs/<run_id>/`. Public summaries include counts, routes, status, verifier reachability, and leakage flags only; private target answers are not exposed.
 - The default coding backend config points at the local Qwen2.5-Coder 0.5B smoke config. Qwen seed-run success is verifier/eval evidence only, not model-quality proof.
 - Hidden-eval workspaces are fixture/holdout material and are excluded from SFT-positive trajectory eligibility by the trajectory-quality audit.
@@ -271,150 +282,60 @@
 
 ### 1.1 Scanned locations
 
-- Repository root (`*.py`)
+- Repository root tracked Python files
 - `agent/`
 - `core/`
 - `engine/`
 - `eval/`
 - `eval_harness/`
+- `model_selection/`
 - `observability/`
+- `retrieval/`
 - `safety/`
 - `security/`
 - `serving/`
 - `tests/`
+- `tests/helpers/`
+- hidden eval fixture modules under `evals/hidden/fixtures/`
 
 ### 1.2 Excluded from code crawl
 
 - `.venv/` third-party packages
+- `.git/`, `__pycache__/`, `.pytest_cache/`
 - Binary/token cache and checkpoint payloads
+- downloaded local models under `run_artifacts/local_models/`
+- generated run artifacts under `run_artifacts/`
 
 ### 1.3 Python module inventory
 
-#### Root (15)
+Inventory source: `git ls-files *.py` on 2026-05-28. This is tracked-source-only and excludes `.venv`, caches, generated artifacts, checkpoint/model directories, and ignored files.
 
-- `alignment.py`
-- `config.py`
-- `data.py`
-- `distillation_trainer.py`
-- `download_data.py`
-- `eval_suite.py`
-- `hardware_profiles.py`
-- `infinite_improver.py`
-- `model.py`
-- `quant_utils.py`
-- `run.py`
-- `sft_trainer.py`
-- `tokenizer.py`
-- `train.py`
-- `train_tokenizer.py`
+| Area | Tracked Python files | Notes |
+|---|---:|---|
+| Root modules | 15 | Entry points and training/eval/model primitives. |
+| `agent/` | 16 | Verified coding-agent, backend integration, exact routing, trajectory storage/export/quality. |
+| `core/` | 11 | Config, dependency, checkpoint, scheduling, sequence, and attention helpers. |
+| `engine/` | 2 | Optimizer/AMP policy. |
+| `eval/` | 2 | Benchmark/report-card harness wrapper. |
+| `eval_harness/` | 8 | Hidden eval assets/runner, manifests, contamination checks, statistics, small-model comparison. |
+| `evals/hidden/fixtures/` | 2 | Hidden-eval fixture source files; holdout/eval material, not training positives. |
+| `model_selection/` | 2 | Candidate readiness and small-model stop/go/comparison support. |
+| `observability/` | 6 | Metrics, registry, security events, tracing, training telemetry. |
+| `retrieval/` | 2 | Local lexical repo-doc retrieval, citation validation, cited answer assembly, claim-support verifier. |
+| `safety/` | 3 | Prompt and output safety filters. |
+| `security/` | 2 | Path/data validation and gated code execution helpers. |
+| `serving/` | 1 | Fail-closed serving boundary. |
+| `tests/` | 27 | Test modules. |
+| `tests/helpers/` | 2 | Test-only fake Transformers helper package. |
 
-#### agent/ (16)
-
-- `agent/__init__.py`
-- `agent/backend.py`
-- `agent/context.py`
-- `agent/critic.py`
-- `agent/exact_tools.py`
-- `agent/exporters.py`
-- `agent/optimize.py`
-- `agent/orchestrator.py`
-- `agent/planner.py`
-- `agent/retrieval.py`
-- `agent/router.py`
-- `agent/trajectory.py`
-- `agent/trajectory_quality.py`
-- `agent/types.py`
-- `agent/verify.py`
-- `agent/workspace.py`
-
-#### core/ (11)
-
-- `core/__init__.py`
-- `core/checkpoint_io.py`
-- `core/config_manager.py`
-- `core/config_schema.py`
-- `core/dependency_checks.py`
-- `core/hardware_optim.py`
-- `core/logging.py`
-- `core/lr_schedule.py`
-- `core/ops.py`
-- `core/sequence_ops.py`
-- `core/training_lifecycle.py`
-
-#### engine/ (2)
-
-- `engine/__init__.py`
-- `engine/optimizer_factory.py`
-
-#### eval/ (2)
-
-- `eval/__init__.py`
-- `eval/benchmark_harness.py`
-
-#### eval_harness/ (6)
-
-- `eval_harness/__init__.py`
-- `eval_harness/contamination_checks.py`
-- `eval_harness/hidden_eval_assets.py`
-- `eval_harness/manifests.py`
-- `eval_harness/runner.py`
-- `eval_harness/statistical_tests.py`
-
-#### evals/ (2)
-
-- `evals/hidden/fixtures/coding_patch/math_ops.py`
-- `evals/hidden/fixtures/coding_repair/slug_tools.py`
-
-#### observability/ (6)
-
-- `observability/__init__.py`
-- `observability/metrics.py`
-- `observability/run_registry.py`
-- `observability/security_events.py`
-- `observability/tracing.py`
-- `observability/training_telemetry.py`
-
-#### safety/ (3)
-
-- `safety/__init__.py`
-- `safety/policy_filters.py`
-- `safety/prompt_attack_checks.py`
-
-#### security/ (2)
-
-- `security/__init__.py`
-- `security/validator.py`
-
-#### serving/ (1)
-
-- `serving/server.py`
-
-#### tests/ (24)
-
-- `tests/test_agent_phase1.py`
-- `tests/test_agent_phase2.py`
-- `tests/test_agent_phase3.py`
-- `tests/test_agent_phase4.py`
-- `tests/test_audit_truthfulness.py`
-- `tests/test_bakeoff_protocol_assets.py`
-- `tests/test_backend_integration_plan_assets.py`
-- `tests/test_cli_truthfulness.py`
-- `tests/test_config_profiles.py`
-- `tests/test_core_lr_schedule.py`
-- `tests/test_core_sequence_ops.py`
-- `tests/test_data_token_truthfulness.py`
-- `tests/test_deployment_profiles.py`
-- `tests/test_eval_integrity.py`
-- `tests/test_hidden_eval_assets.py`
-- `tests/test_hard_evidence.py`
-- `tests/test_kv_cache.py`
-- `tests/test_model_shapes.py`
-- `tests/test_quantization_truthfulness.py`
-- `tests/test_retrieval_design_assets.py`
-- `tests/test_serving_truthfulness.py`
-- `tests/test_training_safety.py`
-- `tests/test_transformers_backend_mvp.py`
-- `tests/test_trajectory_quality.py`
+Total tracked Python files: **101**.
+Tracked test files matching `tests/test_*.py`: **27**.
+Tracked test helper modules: **2**.
+Tracked config JSON files under `configs/`: **6**.
+Tracked backend-integration policy/spec files: **12**.
+Tracked retrieval-design policy/spec files: **10**.
+Tracked model-selection files, including JSON/Markdown artifacts: **12**.
+Tracked hidden-eval files under `evals/hidden/`: **12**.
 
 ---
 
@@ -433,6 +354,9 @@ Primary architectural planes:
 - Agent plane:
   - Verified coding-agent subsystem in `agent/*`
   - Deterministic exact-task routing, bounded repair, trajectory storage, conservative retrieval, and strict export hooks
+- Retrieval/source-grounding plane:
+  - Local lexical repo-doc retrieval, citation validation, cited answer assembly, and claim-level lexical support in `retrieval/local_repo.py`
+  - Hidden source/retrieval seed execution through item-scoped provided documents only
 - Model plane:
   - Default dense decoder-only GQA transformer in `model.py`
   - Legacy experimental profile gates MoE, memory tokens, recursive loops, MoD routing, and confidence head
@@ -461,11 +385,20 @@ Primary architectural planes:
 
 ### 3.1 Supported commands
 
+Command source: current `run.py` argparse choices on 2026-05-28. Total commands: **48**.
+
 - `agent-plan`
 - `agent-solve`
 - `agent-verify`
 - `agent-backend-smoke`
 - `agent-backend-provision-tiny-model`
+- `agent-backend-provision-small-candidate`
+- `candidate-readiness-smoke`
+- `hidden-eval-seed-run`
+- `retrieval-index-build`
+- `retrieval-search`
+- `retrieval-citation-check`
+- `retrieval-answer`
 - `trajectory-list`
 - `trajectory-show`
 - `trajectory-search`
@@ -481,6 +414,7 @@ Primary architectural planes:
 - `token-manifest`
 - `token-integrity`
 - `deps`
+- `compile-source`
 - `hardware-validate`
 - `gpu-fit-validate`
 - `data-governance`
@@ -525,6 +459,7 @@ Primary architectural planes:
 - `token-manifest`: reconstructs a token artifact manifest from existing local token binaries with explicit reconstructed-provenance caveats
 - `token-integrity`: checks local token artifact sizes, token counts, split pairing, and labeled full-or-sampled hashes without claiming data quality
 - `deps`: checks the installed environment against the declared requirement file
+- `compile-source`: compiles tracked Python source files only and skips generated/artifact roots; it is an ergonomics helper, not a replacement for full `python -m compileall -q .`
 - `hardware-validate`: reports current-machine hardware evidence and runs a narrow CPU or CUDA validation step without claiming full training fit
 - `gpu-fit-validate`: runs a small bounded CUDA fit matrix on the repo-local `.venv` interpreter, records peak memory/checkpoint/resume evidence, and classifies 4GB RTX 2050 hardware as validation-only for the current target
 - `data-governance`: writes source/category/license-status, manual source metadata coverage, repo policy status, training blocker level, exact dedup scan coverage, bounded train/validation exact-overlap, and source-level benchmark-risk evidence without claiming legal clearance, near-deduplication, or content contamination detection
@@ -539,6 +474,11 @@ Primary architectural planes:
 - `agent-backend-provision-tiny-model`: explicitly provisions an allowlisted tiny local Transformers smoke model; this is not model-quality or bakeoff evidence
 - `agent-backend-provision-small-candidate`: autonomously provisions an allowlisted small instruction-following backend smoke candidate without claiming model quality
 - `candidate-readiness-smoke`: checks one shortlisted candidate slot for local availability and pre-bakeoff structured-output readiness without selecting a winner
+- `hidden-eval-seed-run`: runs the narrow private hidden-eval seed subset with private target leakage controls; it is not a full bakeoff
+- `retrieval-index-build`: builds the local lexical repo-doc retrieval index over approved docs/manifests only
+- `retrieval-search`: returns deterministic lexical matches and checkable citation objects; it does not generate answers
+- `retrieval-citation-check`: validates citation presence, source policy, locator resolution, and snippet/hash support
+- `retrieval-answer`: builds cautious extractive cited answers or abstains, with claim-level lexical support checks and no model generation
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning
@@ -1270,6 +1210,20 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `eval_results/benchmark_harness_scale_comparison.csv`
 - `eval_results/benchmark_harness_summary.md`
 
+### 14.6 Phase A backend, retrieval, hidden-eval, and trajectory artifacts
+
+- `run_artifacts/local_models/`: downloaded local smoke/checkpoint model files for backend validation. These are generated/downloaded artifacts, not source files and not training outputs.
+- `run_artifacts/hidden_eval_runs/<run_id>/`: hidden-eval seed execution reports and per-item workspaces. Public summaries must not expose private targets or answer keys.
+- `run_artifacts/retrieval_index/local_repo_docs_index_v1.json`: generated deterministic lexical index for approved repo-authored docs/manifests only.
+- `run_artifacts/trajectory_quality/<audit_id>/report.json`: generated trajectory future-use eligibility audits. These reports do not create SFT-positive data by themselves.
+- `backend_integration/`: tracked policy/spec artifacts for backend integration, structured candidate output, failure contracts, and output normalization.
+- `retrieval_design/`: tracked design/policy/spec artifacts for source policy, citation contract, abstention, and retrieval verifier expectations.
+- `model_selection/`: tracked candidate/bakeoff/readiness artifacts plus the local small-model stop/go memo.
+- `configs/backend_smoke_*.json` and `configs/backend_candidate_smoke_*.json`: tracked local-only backend smoke configs and examples. They are not proof that corresponding models are present or useful.
+- `evals/hidden/hidden_eval_seed_set_v1.jsonl`: tracked public seed metadata for hidden eval. It is explicitly unignored despite the global `*.jsonl` rule.
+- `evals/hidden/private/hidden_eval_private_targets_v1.json`: tracked private target/behavior assertions for local hidden-eval execution. It must not be copied into training positives or public summaries.
+- `evals/hidden/fixtures/`: hidden-eval fixture material. These files are eval/holdout fixtures, not training corpus material.
+
 ---
 
 ## 15. File-by-File Technical Manifest (Entry-Point Focus)
@@ -1332,10 +1286,21 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `eval/benchmark_harness.py`: report-card outputs and disabled external-comparison warning artifacts
 - `eval_harness/runner.py`: eval wrapper + benchmark exclusion coverage manifest
 - `eval_harness/contamination_checks.py`: source-exclusion coverage helper; not content contamination detection
+- `eval_harness/hidden_eval_assets.py`: hidden-eval asset loading and integrity validation
+- `eval_harness/hidden_seed_runner.py`: narrow hidden-eval seed execution with exact/backend/retrieval routes and privacy-preserving summaries
 - `eval_harness/manifests.py`: manifest lifecycle helpers
+- `eval_harness/small_model_comparison.py`: non-leaderboard small-model smoke comparison reports
 - `eval_harness/statistical_tests.py`: lightweight mean/std/bootstrap CI
 
-### 15.5 Observability, safety, security, serving
+### 15.5 Agent, retrieval, and model-selection packages
+
+- `agent/backend.py`: local Transformers backend integration, structured candidate validation, output normalization, tiny/small model provisioning, backend smoke reporting
+- `agent/orchestrator.py`: verified solve loop, exact routing, backend-backed candidate application, bounded repair, and verifier authority
+- `agent/trajectory_quality.py`: strict trajectory future-use classification; SFT-positive eligibility remains fail-closed
+- `retrieval/local_repo.py`: local lexical repo-doc index/search, citation validation, cited answer assembly, claim-level lexical support verifier, abstention behavior
+- `model_selection/readiness.py`: candidate readiness smoke path without bakeoff winner or model-quality claims
+
+### 15.6 Observability, safety, security, serving
 
 - `observability/metrics.py`: JSONL metric sink
 - `observability/training_telemetry.py`: step, gradient, hardware and throughput telemetry
@@ -1347,9 +1312,16 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `safety/policy_filters.py`: output sanitization and policy check
 - `serving/server.py`: fail-closed serving boundary integrating safety checks
 
-### 15.6 Tests
+### 15.7 Tests
 
 - `tests/test_audit_truthfulness.py`: Pass 1 audit truthfulness checks
+- `tests/test_agent_phase1.py`: initial agent planning/solve/verify contract tests
+- `tests/test_agent_phase2.py`: repair-loop and optimizer behavior tests
+- `tests/test_agent_phase3.py`: trajectory storage/list/show/search tests
+- `tests/test_agent_phase4.py`: trajectory export contract tests
+- `tests/test_backend_integration_plan_assets.py`: backend integration policy/spec artifact checks
+- `tests/test_bakeoff_protocol_assets.py`: bakeoff protocol artifact checks without executing bakeoff
+- `tests/test_candidate_readiness.py`: candidate shortlist/readiness smoke tests
 - `tests/test_cli_truthfulness.py`: CLI status/deps/report truthfulness checks
 - `tests/test_config_profiles.py`: model profile and legacy isolation checks
 - `tests/test_core_lr_schedule.py`: LR boundary and token-step equivalence checks
@@ -1358,12 +1330,18 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `tests/test_deployment_profiles.py`: deployment tier honesty checks
 - `tests/test_eval_integrity.py`: eval checkpoint and benchmark-integrity checks
 - `tests/test_hard_evidence.py`: hardware, constrained GPU fit, governance, dedup, and short-validation evidence checks
+- `tests/test_hidden_eval_assets.py`: hidden-eval asset, seed runner, privacy, and small-model comparison tests
 - `tests/test_kv_cache.py`: bounded local KV cache checks
 - `tests/test_model_shapes.py`: dense GQA model shape and generation checks
 - `tests/test_quantization_truthfulness.py`: quantization report contract checks
+- `tests/test_retrieval_design_assets.py`: retrieval design/policy artifact checks
+- `tests/test_retrieval_mvp.py`: local retrieval, citation, cited answer, claim-support, and hidden retrieval eval tests
 - `tests/test_trajectory_quality.py`: trajectory-quality policy and audit filtering checks
 - `tests/test_serving_truthfulness.py`: fail-closed serving checks
+- `tests/test_small_candidate_provision.py`: allowlisted small-model provisioning/probe tests
 - `tests/test_training_safety.py`: preflight, checkpoint, tiny train, and real-token validation checks
+- `tests/test_transformers_backend_mvp.py`: local Transformers backend, structured candidate, normalization, and verifier smoke tests
+- `tests/helpers/fake_transformers.py`: test-only fake Transformers shim used by backend/readiness tests
 
 ---
 
@@ -1383,6 +1361,14 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 
 Behavior currently present in code and important for future changes:
 
+- Phase A is still active; Phase B has not started.
+- RTX 2050 4GB evidence supports validation/small-smoke work, not local 7B/14B bakeoff or pretraining readiness.
+- Qwen2.5-Coder 0.5B and 1.5B local smoke evidence does not prove model quality; both currently have `0` backend-routed hidden coding verifier passes.
+- `trajectory-quality-audit` continues to report `sft_positive: 0`; hidden-eval, fixture, exact-tool, backendless, and smoke traces must not be inflated into positive training data.
+- Local retrieval is lexical repo-doc/item-scoped retrieval only. Web retrieval, vector search, embeddings, semantic memory, broad RAG, and external source crawling are not implemented.
+- Claim-level retrieval support is direct/lexical support only and reports `semantic_truth_claim: limited_or_none`; it is not full semantic entailment or factual proof.
+- Data governance still does not provide legal clearance. Repo-policy allowance does not equal legal approval.
+- No real pretraining checkpoint or model-quality eval score is evidenced by `status` unless the corresponding artifact checks show it.
 - In `model.GQAttention`, local/sliding KV cache is bounded to `sliding_window` entries for local layers; global layers still keep full KV.
 - Deployment tier estimates are lower bounds only and do not validate GGUF/GPTQ/AWQ/vLLM/llama.cpp support.
 - In `model.MoE`, `aux_loss` and `load_balance_loss` are currently the same scalar term in the legacy experimental profile.

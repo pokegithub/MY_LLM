@@ -144,6 +144,180 @@
       "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
     },
     {
+      "id": "hidden_truth_002",
+      "category": "source_grounded_truthfulness",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "434c472b4a6466671ee347818ea7a65b840a9a350fc3d360237213f77be2743f",
+      "private_target_ref": "hidden_truth_002",
+      "private_target_sha256": "8d044f2286b84d010af5f720aa56e7aeedfb08b2c8ced91bc3a035b3b6fc1eb4",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_002",
+      "category": "retrieval_grounded_qa",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "65c189ca313c7a5b12f39534f0b477d6df9252fed8670b54ae50317a8a0ffe13",
+      "private_target_ref": "hidden_retrieval_002",
+      "private_target_sha256": "30b1927fd5f37a2a222ac5a08fea3c1f7b8ddbf169eeaa6a3eb1c654e047eead",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        },
+        {
+          "path": "fixtures/source_docs/celadon_release_notes.md",
+          "sha256": "4dd685d733792c59a5085dc3b68761ba0a290670dd465d55e8374f92ec88dba6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_current_001",
+      "category": "retrieval_grounded_qa",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "16e6e035c954073bc5acac037c73eabbb58ba2993dc10d136cf5a40a69da55bb",
+      "private_target_ref": "hidden_retrieval_current_001",
+      "private_target_sha256": "617b16df15dd7d106eb007d75d6906291ce04bd5b8dbc95ec0a96ae627c44adc",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/source_policy_excerpt.md",
+          "sha256": "6a46dea86f8226f63fd7ed2aa52fef7e94e32e010eace0c204172e21b62eef03"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_truth_missing_001",
+      "category": "source_grounded_truthfulness",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "353f3de1da9145ab9e7835eafcc8abe3da347754b5cde5855a5b96ac0e65c998",
+      "private_target_ref": "hidden_truth_missing_001",
+      "private_target_sha256": "2be4b2a257cac812c4e4cb0a009404a459f508af30b443c3ebcb87d4530a8dbd",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_contradict_001",
+      "category": "retrieval_grounded_qa",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "e0fcf55d28abf1db4dfb58d1a04ceb658d7119c445a1226463f95ea36d3a901a",
+      "private_target_ref": "hidden_retrieval_contradict_001",
+      "private_target_sha256": "788d2e2a3a1512ffc096abe1c51f1db011153cc357fc2e0fb6e8070e9e82e008",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_weak_001",
+      "category": "retrieval_grounded_qa",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "3a0e01ba00787cd7dd2f1ab0ceac6b74292e1914c5b8626d55e73b6caeafb37c",
+      "private_target_ref": "hidden_retrieval_weak_001",
+      "private_target_sha256": "04b9d712ecebe31309a704203bfeeecaa9e2b525aa8e7d5f4fd1774e6ec698b6",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_private_exclusion_001",
+      "category": "source_grounded_truthfulness",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "079cfc4668e95123cbb6f73c641e3cc9f96f9b26e510111a6cca0888e03fbd27",
+      "private_target_ref": "hidden_private_exclusion_001",
+      "private_target_sha256": "a38f1cc481f741defde03db78755ec9bb9ec94c5ee6497fdc22cb8616d26cc55",
+      "artifact_hashes": [
+        {
+          "path": "private/hidden_eval_private_targets_v1.json",
+          "sha256": "62e6a6b7d773cacd864cc40be050753f7741af9af165c6e5d82dec37d19369c0"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_citation_required_001",
+      "category": "retrieval_grounded_qa",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "2c47f0ae7a3bfbc56f53843a7717f1317703669affd20f27eafa57998c7d7ade",
+      "private_target_ref": "hidden_retrieval_citation_required_001",
+      "private_target_sha256": "18e1ae21b511e446fe8b13dd49289355792bbdc2a0834caa64553de6b572d5b1",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_truth_overclaim_001",
+      "category": "source_grounded_truthfulness",
+      "split": "frozen",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "7a9833e156a1c981665f2dfa1b81a70459f1186f3d761927211aba3f191d8004",
+      "private_target_ref": "hidden_truth_overclaim_001",
+      "private_target_sha256": "2ad75161b11fef93123547107f07ad57999dd87662425a4e96d99afd51f366a5",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_release_notes.md",
+          "sha256": "4dd685d733792c59a5085dc3b68761ba0a290670dd465d55e8374f92ec88dba6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
+      "id": "hidden_retrieval_partial_001",
+      "category": "retrieval_grounded_qa",
+      "split": "rotating",
+      "status": "active",
+      "version": "v1",
+      "seed_item_sha256": "b9f857fa116ebae5e1734a7d57b28bbb7761a9b3d419f56201040eeec4aabad2",
+      "private_target_ref": "hidden_retrieval_partial_001",
+      "private_target_sha256": "60872996a7a42f08cfa37d4357b3538d5a88c243025e1e4706303e117c796b10",
+      "artifact_hashes": [
+        {
+          "path": "fixtures/source_docs/celadon_runtime_matrix.md",
+          "sha256": "2fe5df736de8599131713d2136764824e90fc6a82615b3f46a7edb02ee97abb6"
+        }
+      ],
+      "contamination_control_notes": "Exclude from training, export, and normal retrieval corpora; refresh only through the holdout registry."
+    },
+    {
       "id": "hidden_kpi_001",
       "category": "verifier_loop_kpis_latency_cost",
       "split": "rotating",
@@ -162,16 +336,16 @@
     }
   ],
   "split_summary": {
-    "frozen": 4,
-    "rotating": 5
+    "frozen": 8,
+    "rotating": 11
   },
   "category_summary": {
     "exact_symbolic_correctness": 2,
     "abstention_need_tool_need_source": 2,
-    "source_grounded_truthfulness": 1,
+    "source_grounded_truthfulness": 5,
     "coding_patch_success": 1,
     "coding_repair_loop_success": 1,
-    "retrieval_grounded_qa": 1,
+    "retrieval_grounded_qa": 7,
     "verifier_loop_kpis_latency_cost": 1
   },
   "registry_notes": [
