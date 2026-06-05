@@ -1,0 +1,7 @@
+{
+  "agent": {
+    "backend_kind": "local_transformers_in_process",
+    "backend_model_id_or_path": "./run_artifacts/local_models/candidates/open-dense-7b",
+    "backend_local_files_only": true
+  }
+}
