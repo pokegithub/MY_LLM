@@ -137,6 +137,10 @@ def _claim_terms(text: str) -> List[str]:
     return [token for token in _query_terms(text) if not token.startswith("c")]
 
 
+def _command_phrases(text: str) -> List[str]:
+    return re.findall(r"\b[a-z][a-z0-9_]*-[a-z0-9_-]+\b", text.lower())
+
+
 def _is_prefix(path_ref: str, prefix: str) -> bool:
     return path_ref == prefix or path_ref.startswith(prefix.rstrip("/") + "/")
 
@@ -390,6 +394,7 @@ def search_index(
         }
     scored = []
     useful_query_tokens = _query_terms(query)
+    command_phrases = _command_phrases(query)
     for chunk in index.get("chunks", []):
         if chunk.get("source_class") != ALLOWED_SOURCE_CLASS:
             continue
@@ -397,11 +402,18 @@ def search_index(
         document_ref = str(chunk.get("document_ref", ""))
         content_lower = content.lower()
         document_lower = document_ref.lower().replace("/", " ").replace("_", " ")
+        if command_phrases and not any(
+            phrase in content_lower or phrase in document_ref.lower()
+            for phrase in command_phrases
+        ):
+            continue
         content_tokens = _tokenize(content)
         document_tokens = _tokenize(document_lower)
         token_set = set(content_tokens + document_tokens)
         document_token_set = set(document_tokens)
         score = sum(2 if token in token_set else 0 for token in query_tokens)
+        if command_phrases:
+            score += 120
         score += sum(content_lower.count(token) for token in query_tokens)
         document_match_count = sum(1 for token in useful_query_tokens if token in document_token_set)
         score += document_match_count * 10
@@ -559,8 +571,14 @@ def _answer_abstention_payload(
     }
 
 
-def _clean_snippet_for_answer(content: str, *, max_chars: int = 260) -> str:
+def _clean_snippet_for_answer(
+    content: str,
+    *,
+    max_chars: int = 260,
+    focus_phrases: Optional[Sequence[str]] = None,
+) -> str:
     parts: List[str] = []
+    focused_parts: List[str] = []
     for raw_line in content.splitlines():
         line = raw_line.strip()
         if not line:
@@ -568,9 +586,13 @@ def _clean_snippet_for_answer(content: str, *, max_chars: int = 260) -> str:
         line = re.sub(r"^#{1,6}\s*", "", line)
         line = re.sub(r"^[-*]\s*", "", line)
         if line:
+            if focus_phrases and any(phrase in line.lower() for phrase in focus_phrases):
+                focused_parts.append(line)
             parts.append(line)
-        if len(" ".join(parts)) >= max_chars:
+        if not focus_phrases and len(" ".join(parts)) >= max_chars:
             break
+    if focused_parts:
+        parts = focused_parts
     text = " ".join(parts).strip()
     if len(text) > max_chars:
         text = text[: max_chars - 3].rstrip() + "..."
@@ -688,6 +710,7 @@ def assemble_cited_answer(
         )
     if index is None:
         index = load_index(index_path, workspace_root=workspace_root)
+    command_phrases = _command_phrases(query)
     search = search_index(query, index=index, top_k=top_k)
     if search.get("status") != "evidence_found":
         return _answer_abstention_payload(
@@ -725,7 +748,7 @@ def assemble_cited_answer(
         chunk = _chunk_by_citation(index, citation)
         if not chunk:
             continue
-        cleaned = _clean_snippet_for_answer(str(chunk.get("content", "")))
+        cleaned = _clean_snippet_for_answer(str(chunk.get("content", "")), focus_phrases=command_phrases)
         if cleaned:
             answer_parts.append(f"{cleaned} [{citation.get('citation_id')}]")
             used_citations.append(citation)

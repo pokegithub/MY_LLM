@@ -14,6 +14,8 @@ Usage:
   python run.py retrieval-search Search the local repo-doc retrieval index
   python run.py retrieval-citation-check Validate citations from a local retrieval search
   python run.py retrieval-answer Build a cautious cited local repo-doc answer or abstain
+  python run.py repo-assist    Answer local repo questions with cited retrieval only
+  python run.py repo-assist-eval Run the manual repo-assist query pack
   python run.py trajectory-list   List stored coding-agent trajectories
   python run.py trajectory-show   Show one stored coding-agent trajectory
   python run.py trajectory-search Search stored coding-agent trajectories
@@ -99,6 +101,7 @@ DEFAULT_AGENT_REPORT_ROOT = os.path.join(
 )
 REPORT_PATH = None
 BACKEND_REQUIREMENTS_PATH = "./requirements-backend.txt"
+DEFAULT_REPO_ASSIST_QUERY_PACK = "./evals/repo_assist/repo_assist_manual_queries_v1.json"
 
 
 def _emit_json(payload):
@@ -176,6 +179,8 @@ def check_dependencies(command: str):
         "retrieval-search": {},
         "retrieval-citation-check": {},
         "retrieval-answer": {},
+        "repo-assist": {},
+        "repo-assist-eval": {},
         "trajectory-list": {},
         "trajectory-show": {},
         "trajectory-search": {},
@@ -619,6 +624,8 @@ def _validate_trajectory_args(args):
         raise ValueError("retrieval-search requires --query")
     if args.command == "retrieval-answer" and not (args.query or "").strip():
         raise ValueError("retrieval-answer requires --query")
+    if args.command == "repo-assist" and not (args.query or "").strip():
+        raise ValueError("repo-assist requires --query")
 
 
 def run_agent_verify(args):
@@ -995,6 +1002,255 @@ def run_retrieval_answer(args):
     print(f"  support_level  : {validation.get('support_level')}")
     print(f"  semantic_truth : {validation.get('semantic_truth_claim')}")
     print(f"  quality_claim  : {payload.get('quality_claim')}")
+    print("=" * 60)
+
+
+def _repo_assist_payload(args):
+    from retrieval.local_repo import assemble_cited_answer, load_index, validate_cited_answer
+
+    index = load_index(args.retrieval_index_path, workspace_root=".")
+    answer_payload = assemble_cited_answer(
+        args.query,
+        index=index,
+        index_path=args.retrieval_index_path,
+        workspace_root=".",
+        top_k=args.limit,
+    )
+    validation = validate_cited_answer(answer_payload, index)
+    answer_payload["answer_verification"] = validation
+    return {
+        "schema": "repo_assist_answer_v1",
+        "query": args.query,
+        "assistant_status": answer_payload.get("answer_status"),
+        "answer_text": answer_payload.get("answer_text") or "",
+        "citations": answer_payload.get("citations", []),
+        "citation_count": len(answer_payload.get("citations", [])),
+        "claim_support": validation.get("claim_support_level"),
+        "claim_count": validation.get("claim_count", 0),
+        "claims_checked": validation.get("claims_checked", 0),
+        "claims_supported": validation.get("claims_supported", 0),
+        "claims_partially_supported": validation.get("claims_partially_supported", 0),
+        "claims_unsupported": validation.get("claims_unsupported", 0),
+        "claims_contradicted": validation.get("claims_contradicted", 0),
+        "claims_missing_citations": validation.get("claims_missing_citations", 0),
+        "answer_support_quality": validation.get("answer_support_quality"),
+        "source_policy": validation.get("source_policy_status"),
+        "abstention_reason": answer_payload.get("abstention_reason"),
+        "verifier_valid": bool(validation.get("valid")),
+        "semantic_truth_claim": validation.get("semantic_truth_claim") or "limited_or_none",
+        "quality_claim": "none",
+        "uses_model_backend": False,
+        "uses_web": False,
+        "uses_vector_search": False,
+        "uses_semantic_memory": False,
+        "phase_b_started": False,
+        "model_quality_proven": False,
+        "answer_verification": validation,
+        "retrieval_answer_schema": answer_payload.get("schema"),
+    }
+
+
+def _repo_assist_status_family(status: str) -> str:
+    if status in {"answered_with_citations", "partial_answer_with_caveats"}:
+        return "answered"
+    if status in {
+        "abstained_no_evidence",
+        "abstained_out_of_scope",
+        "blocked_source_policy",
+        "unsupported_current_phase",
+    }:
+        return "unsupported"
+    return "unknown"
+
+
+def _load_repo_assist_query_pack(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if payload.get("schema") != "repo_assist_manual_queries_v1":
+        raise ValueError("repo-assist query pack schema mismatch")
+    queries = payload.get("queries")
+    if not isinstance(queries, list) or not queries:
+        raise ValueError("repo-assist query pack requires non-empty queries")
+    return payload
+
+
+def run_repo_assist_eval(args):
+    pack_path = args.repo_assist_query_pack
+    pack = _load_repo_assist_query_pack(pack_path)
+    results = []
+    counts = {
+        "query_count": 0,
+        "passed_count": 0,
+        "failed_count": 0,
+        "expected_answered": 0,
+        "expected_unsupported": 0,
+        "supported_queries_answered_with_citations": 0,
+        "unsupported_queries_abstained": 0,
+        "claims_unsupported_total": 0,
+    }
+    all_uses_web = False
+    all_uses_model_backend = False
+    for item in pack["queries"]:
+        query_args = argparse.Namespace(
+            query=item.get("query"),
+            retrieval_index_path=args.retrieval_index_path,
+            limit=args.limit,
+        )
+        payload = _repo_assist_payload(query_args)
+        expected_family = item.get("expected_status_family")
+        expected_uses_web = bool(item.get("expected_uses_web", False))
+        expected_uses_model_backend = bool(item.get("expected_uses_model_backend", False))
+        requires_citations = bool(item.get("expected_requires_citations", False))
+        family = _repo_assist_status_family(str(payload.get("assistant_status") or ""))
+        failures = []
+        if family != expected_family:
+            failures.append(f"status_family:{family}!={expected_family}")
+        if bool(payload.get("uses_web")) != expected_uses_web:
+            failures.append("uses_web_mismatch")
+        if bool(payload.get("uses_model_backend")) != expected_uses_model_backend:
+            failures.append("uses_model_backend_mismatch")
+        if requires_citations and not payload.get("citations"):
+            failures.append("expected_citations_missing")
+        if requires_citations and not payload.get("verifier_valid"):
+            failures.append("expected_cited_answer_not_verified")
+        if not requires_citations and family == "unsupported" and payload.get("citations"):
+            failures.append("unsupported_answer_should_not_cite")
+
+        all_uses_web = all_uses_web or bool(payload.get("uses_web"))
+        all_uses_model_backend = all_uses_model_backend or bool(payload.get("uses_model_backend"))
+        counts["query_count"] += 1
+        if expected_family == "answered":
+            counts["expected_answered"] += 1
+        if expected_family == "unsupported":
+            counts["expected_unsupported"] += 1
+        if expected_family == "answered" and family == "answered" and payload.get("citations"):
+            counts["supported_queries_answered_with_citations"] += 1
+        if expected_family == "unsupported" and family == "unsupported":
+            counts["unsupported_queries_abstained"] += 1
+        counts["claims_unsupported_total"] += int(payload.get("claims_unsupported") or 0)
+        if failures:
+            counts["failed_count"] += 1
+        else:
+            counts["passed_count"] += 1
+        results.append({
+            "id": item.get("id"),
+            "query": item.get("query"),
+            "expected_status_family": expected_family,
+            "assistant_status": payload.get("assistant_status"),
+            "status_family": family,
+            "verifier_valid": payload.get("verifier_valid"),
+            "citation_count": len(payload.get("citations", [])),
+            "claims_unsupported": payload.get("claims_unsupported"),
+            "abstention_reason": payload.get("abstention_reason"),
+            "uses_web": payload.get("uses_web"),
+            "uses_model_backend": payload.get("uses_model_backend"),
+            "quality_claim": payload.get("quality_claim"),
+            "failures": failures,
+        })
+
+    report = {
+        "schema": "repo_assist_manual_eval_report_v1",
+        "query_pack_schema": pack.get("schema"),
+        "query_pack_path": os.path.abspath(pack_path),
+        "retrieval_scope": pack.get("retrieval_scope"),
+        "counts": counts,
+        "results": results,
+        "uses_web": all_uses_web,
+        "uses_model_backend": all_uses_model_backend,
+        "uses_vector_search": False,
+        "uses_semantic_memory": False,
+        "phase_b_started": False,
+        "model_quality_proven": False,
+        "quality_claim": "none",
+        "sft_positive_claim": "not_changed_by_repo_assist_eval",
+    }
+    report_path = REPORT_PATH or os.path.join(
+        ".",
+        "run_artifacts",
+        "repo_assist_eval",
+        f"repo_assist_eval_{int(time.time())}.json",
+    )
+    report["report_path"] = os.path.abspath(_write_json_report(report, report_path))
+    if OUTPUT_JSON:
+        _emit_json(report)
+        return
+
+    print("\n" + "=" * 60)
+    print("REPO ASSIST EVAL")
+    print("=" * 60)
+    print(f"  query_pack       : {os.path.abspath(pack_path)}")
+    print(f"  query_count      : {counts['query_count']}")
+    print(f"  passed           : {counts['passed_count']}")
+    print(f"  failed           : {counts['failed_count']}")
+    print(f"  supported_cited  : {counts['supported_queries_answered_with_citations']}")
+    print(f"  unsupported_abstain: {counts['unsupported_queries_abstained']}")
+    print(f"  claims_unsupported_total: {counts['claims_unsupported_total']}")
+    print(f"  uses_web         : {str(all_uses_web).lower()}")
+    print(f"  uses_model_backend: {str(all_uses_model_backend).lower()}")
+    print(f"  quality_claim    : {report['quality_claim']}")
+    print(f"  report_path      : {report['report_path']}")
+    for item in results:
+        if item["failures"]:
+            print(f"  failure          : {item['id']} :: {', '.join(item['failures'])}")
+    print("=" * 60)
+
+
+def run_repo_assist(args):
+    if not args.query:
+        raise ValueError("repo-assist requires --query")
+    payload = _repo_assist_payload(args)
+    if REPORT_PATH:
+        payload["report_path"] = os.path.abspath(_write_json_report(payload, REPORT_PATH))
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("REPO ASSIST")
+    print("=" * 60)
+    print("Status")
+    print(f"  query              : {payload.get('query')}")
+    print(f"  assistant_status   : {payload.get('assistant_status')}")
+    print(f"  verifier_valid     : {str(payload.get('verifier_valid')).lower()}")
+    print("")
+    print("Answer")
+    if payload.get("answer_text"):
+        print(f"  {payload.get('answer_text')}")
+    else:
+        print("  No local source-grounded answer assembled.")
+    if payload.get("abstention_reason"):
+        print("")
+        print("Abstention reason")
+        print(f"  {payload.get('abstention_reason')}")
+    print("")
+    print("Citations")
+    print(f"  count              : {len(payload.get('citations', []))}")
+    for citation in payload.get("citations", [])[: args.limit]:
+        print(
+            "  - "
+            f"{citation.get('citation_id')} "
+            f"{citation.get('document_ref')} "
+            f"{citation.get('locator_type')}={citation.get('locator')}"
+        )
+    print("")
+    print("Claim support")
+    print(f"  claim_support      : {payload.get('claim_support')}")
+    print(f"  claim_count        : {payload.get('claim_count')}")
+    print(f"  claims_checked     : {payload.get('claims_checked')}")
+    print(f"  claims_supported   : {payload.get('claims_supported')}")
+    print(f"  claims_partial     : {payload.get('claims_partially_supported')}")
+    print(f"  claims_unsupported : {payload.get('claims_unsupported')}")
+    print(f"  claims_contradicted: {payload.get('claims_contradicted')}")
+    print(f"  missing_citations  : {payload.get('claims_missing_citations')}")
+    print(f"  source_policy      : {payload.get('source_policy')}")
+    print("")
+    print("Limits")
+    print(f"  semantic_truth     : {payload.get('semantic_truth_claim')}")
+    print(f"  quality_claim      : {payload.get('quality_claim')}")
+    print(f"  uses_web           : {str(payload.get('uses_web')).lower()}")
+    print(f"  uses_model_backend : {str(payload.get('uses_model_backend')).lower()}")
+    print(f"  uses_vector_search : {str(payload.get('uses_vector_search')).lower()}")
+    print(f"  uses_memory        : {str(payload.get('uses_semantic_memory')).lower()}")
     print("=" * 60)
 
 
@@ -2139,6 +2395,8 @@ Commands:
   retrieval-search Search the local repo-doc retrieval index
   retrieval-citation-check Validate citations from a local retrieval search
   retrieval-answer Build a cautious cited local repo-doc answer or abstain
+  repo-assist  Answer local repo questions with cited retrieval only
+  repo-assist-eval Run the manual repo-assist query pack
   trajectory-list   List stored coding-agent trajectories
   trajectory-show   Show one stored coding-agent trajectory
   trajectory-search Search stored coding-agent trajectories
@@ -2190,6 +2448,8 @@ Commands:
             "retrieval-search",
             "retrieval-citation-check",
             "retrieval-answer",
+            "repo-assist",
+            "repo-assist-eval",
             "trajectory-list", "trajectory-show", "trajectory-search",
             "trajectory-export-sft", "trajectory-export-preferences", "trajectory-export-retrieval", "trajectory-quality-audit",
             "tokenizer", "download", "download-safe", "download-core", "download-status", "token-manifest",
@@ -2317,7 +2577,12 @@ Commands:
     parser.add_argument(
         "--query",
         default=None,
-        help="Keyword query for trajectory-search, retrieval-search, or retrieval-answer.",
+        help="Keyword query for trajectory-search, retrieval-search, retrieval-answer, or repo-assist.",
+    )
+    parser.add_argument(
+        "--repo-assist-query-pack",
+        default=DEFAULT_REPO_ASSIST_QUERY_PACK,
+        help="Manual query pack JSON for repo-assist-eval.",
     )
     parser.add_argument(
         "--retrieval-index-path",
@@ -2387,6 +2652,8 @@ Commands:
         "retrieval-search": lambda: run_retrieval_search(args),
         "retrieval-citation-check": lambda: run_retrieval_citation_check(args),
         "retrieval-answer": lambda: run_retrieval_answer(args),
+        "repo-assist": lambda: run_repo_assist(args),
+        "repo-assist-eval": lambda: run_repo_assist_eval(args),
         "trajectory-list": lambda: run_trajectory_list(args),
         "trajectory-show": lambda: run_trajectory_show(args),
         "trajectory-search": lambda: run_trajectory_search(args),

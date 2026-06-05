@@ -1,0 +1,134 @@
+{
+  "schema": "repo_assist_manual_queries_v1",
+  "retrieval_scope": "local_lexical_repo_docs_only",
+  "uses_web": false,
+  "uses_model_backend": false,
+  "uses_vector_search": false,
+  "uses_semantic_memory": false,
+  "quality_claim": "none",
+  "notes": [
+    "Manual smoke pack for repo-assist readability and truthfulness checks.",
+    "Supported queries must answer with citations from approved local repo docs.",
+    "Unsupported/current/external queries must abstain rather than fabricate support.",
+    "This pack is not training data, not hidden eval private target data, and not model-quality evidence."
+  ],
+  "queries": [
+    {
+      "id": "supported_backend_failure_contract",
+      "query": "What is the backend failure contract?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local policy query; should cite backend integration/SYSTEM_MAP evidence."
+    },
+    {
+      "id": "supported_compile_source",
+      "query": "What does compile-source do?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local command query; should cite command documentation."
+    },
+    {
+      "id": "supported_phase_b_status",
+      "query": "Has Phase B started?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local phase status query; must not claim Phase B started."
+    },
+    {
+      "id": "supported_trajectory_quality",
+      "query": "What does trajectory-quality-audit do?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local command query for trajectory future-use filtering."
+    },
+    {
+      "id": "supported_backend_smoke_limits",
+      "query": "Does agent-backend-smoke prove model quality?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Truthfulness-limit query; answer must preserve no model-quality claim."
+    },
+    {
+      "id": "supported_retrieval_answer_limits",
+      "query": "What are the limits of retrieval-answer?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local retrieval caveat query."
+    },
+    {
+      "id": "supported_rtx2050_decision",
+      "query": "What is the current RTX 2050 decision?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local model path decision query."
+    },
+    {
+      "id": "supported_repo_assist_limits",
+      "query": "What does repo-assist use and not use?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-assist self-scope query; must cite local docs and report local-only limits."
+    },
+    {
+      "id": "supported_hidden_eval_seed_runner",
+      "query": "What does hidden-eval-seed-run do?",
+      "expected_status_family": "answered",
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-local hidden-eval command query; must not expose private targets."
+    },
+    {
+      "id": "unsupported_world_news",
+      "query": "What happened in today's world news?",
+      "expected_status_family": "unsupported",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Current-world query; local repo retrieval must abstain."
+    },
+    {
+      "id": "unsupported_latest_model",
+      "query": "What is the latest OpenAI model?",
+      "expected_status_family": "unsupported",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Current/latest external-source query; local repo retrieval must abstain."
+    },
+    {
+      "id": "unsupported_stock_price",
+      "query": "What is the current stock price of RTX 6000?",
+      "expected_status_family": "unsupported",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Market/current-price query; local repo retrieval must abstain."
+    },
+    {
+      "id": "unsupported_gpu_purchase_today",
+      "query": "Should I buy a new GPU today from current market prices?",
+      "expected_status_family": "unsupported",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Current recommendation query requiring external market evidence; local repo retrieval must abstain."
+    }
+  ]
+}

@@ -44,6 +44,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertNotIn("1x/10x/100x comparison report", result.stdout)
         self.assertIn("Run the verified coding-agent solve path", result.stdout)
         self.assertIn("Run the verified coding-agent verify path", result.stdout)
+        self.assertIn("Run the manual repo-assist query pack", result.stdout)
 
     def test_deps_json_reports_machine_readable_environment(self):
         result = self.run_command("deps", "--json")
@@ -63,6 +64,122 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertFalse(payload["behavior_changed"])
         self.assertIn("run_artifacts", payload["skipped_generated_roots"])
         self.assertGreater(payload["scanned_count"], 0)
+
+    def test_repo_assist_supported_query_is_cited_and_local_only(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        result = self.run_command(
+            "repo-assist",
+            "--query",
+            "What is the backend failure contract?",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema"], "repo_assist_answer_v1")
+        self.assertEqual(payload["assistant_status"], "answered_with_citations")
+        self.assertTrue(payload["citations"])
+        self.assertTrue(payload["verifier_valid"])
+        self.assertEqual(payload["claims_unsupported"], 0)
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertEqual(payload["semantic_truth_claim"], "limited_or_none")
+        self.assertFalse(payload["uses_web"])
+        self.assertFalse(payload["uses_model_backend"])
+        self.assertEqual(payload["citation_count"], len(payload["citations"]))
+        self.assertGreater(payload["claims_checked"], 0)
+
+    def test_repo_assist_abstains_for_current_world_query(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        result = self.run_command(
+            "repo-assist",
+            "--query",
+            "What happened in today's world news?",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["assistant_status"], "unsupported_current_phase")
+        self.assertEqual(payload["abstention_reason"], "requires_external_or_current_source")
+        self.assertEqual(payload["citations"], [])
+        self.assertTrue(payload["verifier_valid"])
+        self.assertFalse(payload["uses_web"])
+        self.assertFalse(payload["uses_model_backend"])
+
+    def test_repo_assist_text_output_has_readable_sections(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        supported = self.run_command(
+            "repo-assist",
+            "--query",
+            "What is the backend failure contract?",
+        )
+        self.assertEqual(supported.returncode, 0, supported.stderr + supported.stdout)
+        self.assertIn("Status", supported.stdout)
+        self.assertIn("Answer", supported.stdout)
+        self.assertIn("Citations", supported.stdout)
+        self.assertIn("Claim support", supported.stdout)
+        self.assertIn("Limits", supported.stdout)
+        self.assertIn("uses_web           : false", supported.stdout)
+        self.assertIn("uses_model_backend : false", supported.stdout)
+
+        unsupported = self.run_command(
+            "repo-assist",
+            "--query",
+            "What happened in today's world news?",
+        )
+        self.assertEqual(unsupported.returncode, 0, unsupported.stderr + unsupported.stdout)
+        self.assertIn("unsupported_current_phase", unsupported.stdout)
+        self.assertIn("Abstention reason", unsupported.stdout)
+        self.assertIn("requires_external_or_current_source", unsupported.stdout)
+
+    def test_repo_assist_command_explanation_preserves_truth_limits(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        result = self.run_command(
+            "repo-assist",
+            "--query",
+            "What does compile-source do?",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["assistant_status"], "answered_with_citations")
+        self.assertIn("compile-source", payload["answer_text"])
+        self.assertTrue(payload["citations"])
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertFalse(payload["phase_b_started"])
+        self.assertFalse(payload["model_quality_proven"])
+
+    def test_repo_assist_eval_runs_manual_query_pack(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        result = self.run_command("repo-assist-eval", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        counts = payload["counts"]
+        self.assertEqual(payload["schema"], "repo_assist_manual_eval_report_v1")
+        self.assertGreaterEqual(counts["query_count"], 10)
+        self.assertEqual(counts["failed_count"], 0)
+        self.assertEqual(counts["passed_count"], counts["query_count"])
+        self.assertEqual(
+            counts["supported_queries_answered_with_citations"],
+            counts["expected_answered"],
+        )
+        self.assertEqual(
+            counts["unsupported_queries_abstained"],
+            counts["expected_unsupported"],
+        )
+        self.assertFalse(payload["uses_web"])
+        self.assertFalse(payload["uses_model_backend"])
+        self.assertFalse(payload["phase_b_started"])
+        self.assertFalse(payload["model_quality_proven"])
+        self.assertEqual(payload["quality_claim"], "none")
 
     def test_status_json_reports_next_action(self):
         result = self.run_command("status", "--json")

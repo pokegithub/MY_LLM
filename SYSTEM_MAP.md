@@ -13,12 +13,14 @@
 
 ### Last synchronization
 
-- Date: 2026-05-28
-- Scope: Documentation-only synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, and low-risk cleanup passes. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not change runtime behavior.
+- Date: 2026-06-05
+- Scope: Documentation synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, low-risk cleanup passes, user-facing `repo-assist` command, and manual `repo-assist-eval` query pack. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not claim Phase B, model quality, training readiness, or SFT-positive eligibility.
 - Module count: 101 tracked Python source files, including tests and hidden fixture modules; `.venv`, caches, checkpoints, downloaded models, and run artifacts are excluded.
-- Command count: 48 `run.py` commands from the current argparse command choices.
+- Command count: 50 `run.py` commands from the current argparse command choices.
 - Recent maintenance reflected:
   - `retrieval-answer` exists and uses local lexical repo-doc retrieval only.
+  - `repo-assist` exists as a user-facing local repo-doc assistant that reuses `retrieval-answer`, citation validation, and claim-support verification. It does not use web retrieval, vector search, semantic memory, model/backend generation, or code editing.
+  - `repo-assist-eval` runs the manual local query pack at `evals/repo_assist/repo_assist_manual_queries_v1.json`; it checks cited answers and abstentions without using web or model backends.
   - claim-level lexical support verification exists for cited answers and hidden retrieval/source eval reports.
   - `compile-source` exists as a tracked-source-only compile helper and is not a replacement for full `python -m compileall -q .`.
   - `evals/hidden/hidden_eval_seed_set_v1.jsonl` is now trackable despite the global `*.jsonl` ignore rule; hidden private targets remain separate.
@@ -252,6 +254,8 @@
   - `retrieval-search --query "..."`
   - `retrieval-citation-check`
   - `retrieval-answer --query "..."`
+  - `repo-assist --query "..."`
+  - `repo-assist-eval`
 - Citations follow a checkable object shape with source id, document ref, locator type, locator, support kind, and support snippet hash. Citation validation checks required fields, source policy, locator resolution, and snippet hash.
 - Missing or out-of-scope evidence produces abstention/need-source behavior rather than unsupported answers.
 - Hidden source-grounded and retrieval-grounded seed items can now run only against item-scoped provided documents; those docs are not added to the normal repo-doc retrieval corpus. Public summaries still do not expose private targets or answer keys.
@@ -266,6 +270,16 @@
 - The answer verifier checks citation presence, required fields, locator resolution, source-policy status, snippet hash integrity, citation markers in answer text, and a limited lexical/locator support check. It explicitly reports `semantic_support_level: lexical_or_locator_only`.
 - Hidden source-grounded/retrieval-grounded seed reports now include citation-verifier and answer-verifier results. Public summaries still omit answer text and private targets.
 - Citation validity and lexical support are not full semantic truth verification, and retrieval eval pass/fail is not a model-quality claim.
+
+### Phase A user-facing repo assistant update
+
+- Date: 2026-06-05
+- Scope: Added `repo-assist --query "..."` as a small user-facing local repo assistant on top of the existing retrieval answer machinery, then polished its text output into explicit status, answer, citation, claim-support, and limit sections.
+- `repo-assist` reuses the local lexical repo-doc index, `retrieval-answer`, citation validation, and claim-level lexical support reporting. It does not use web retrieval, vector search, semantic memory, model/backend generation, code editing, or agentic planning.
+- Supported repo-local questions can return cited answers with `quality_claim: none` and `semantic_truth_claim: limited_or_none`; missing, current-world, external, weak, or source-policy-blocked evidence must abstain or return an unsupported status.
+- `evals/repo_assist/repo_assist_manual_queries_v1.json` defines a small manual smoke pack for supported repo-doc queries and unsupported current/external queries.
+- `repo-assist-eval` runs that pack through the same `repo-assist` payload path and reports pass/fail counts, cited supported answers, abstained unsupported answers, and the local-only invariants (`uses_web: false`, `uses_model_backend: false`).
+- The command is not model intelligence, not Phase B, not a bakeoff result, and not training readiness evidence.
 
 ### Phase A retrieval claim-support verifier update
 
@@ -385,7 +399,7 @@ Primary architectural planes:
 
 ### 3.1 Supported commands
 
-Command source: current `run.py` argparse choices on 2026-05-28. Total commands: **48**.
+Command source: current `run.py` argparse choices on 2026-06-05. Total commands: **50**.
 
 - `agent-plan`
 - `agent-solve`
@@ -399,6 +413,8 @@ Command source: current `run.py` argparse choices on 2026-05-28. Total commands:
 - `retrieval-search`
 - `retrieval-citation-check`
 - `retrieval-answer`
+- `repo-assist`
+- `repo-assist-eval`
 - `trajectory-list`
 - `trajectory-show`
 - `trajectory-search`
@@ -479,6 +495,8 @@ Command source: current `run.py` argparse choices on 2026-05-28. Total commands:
 - `retrieval-search`: returns deterministic lexical matches and checkable citation objects; it does not generate answers
 - `retrieval-citation-check`: validates citation presence, source policy, locator resolution, and snippet/hash support
 - `retrieval-answer`: builds cautious extractive cited answers or abstains, with claim-level lexical support checks and no model generation
+- `repo-assist`: user-facing local repo-doc assistant that reuses retrieval-answer/citation/claim-support checks; it uses no web, vector search, memory, model backend, or code editing
+- `repo-assist-eval`: runs the manual repo-assist query pack and reports whether supported local queries answer with citations and unsupported/current queries abstain
 - `trajectory-list` / `trajectory-show` / `trajectory-search`: inspect stored coding-agent trajectories with deterministic metadata filters and compact summaries
 - `trajectory-export-sft` / `trajectory-export-preferences` / `trajectory-export-retrieval`: export stored trajectories into future learning-use artifacts with strict provenance and filtering; these commands do not retrain the model
 - `trajectory-quality-audit`: classify stored trajectories into future-use buckets and report strict SFT/preference/retrieval-memory eligibility without claiming learning
