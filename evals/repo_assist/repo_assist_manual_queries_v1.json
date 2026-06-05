@@ -17,6 +17,7 @@
       "id": "supported_backend_failure_contract",
       "query": "What is the backend failure contract?",
       "expected_status_family": "answered",
+      "expected_answer_style": "extractive",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -26,6 +27,10 @@
       "id": "supported_compile_source",
       "query": "What does compile-source do?",
       "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "compile-source compiles tracked Python source files only"
+      ],
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -35,6 +40,10 @@
       "id": "supported_phase_b_status",
       "query": "Has Phase B started?",
       "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "No. Phase B has not started."
+      ],
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -44,6 +53,7 @@
       "id": "supported_trajectory_quality",
       "query": "What does trajectory-quality-audit do?",
       "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -53,6 +63,10 @@
       "id": "supported_backend_smoke_limits",
       "query": "Does agent-backend-smoke prove model quality?",
       "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "does not claim model quality"
+      ],
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -62,6 +76,7 @@
       "id": "supported_retrieval_answer_limits",
       "query": "What are the limits of retrieval-answer?",
       "expected_status_family": "answered",
+      "expected_answer_style": "extractive",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -71,6 +86,7 @@
       "id": "supported_rtx2050_decision",
       "query": "What is the current RTX 2050 decision?",
       "expected_status_family": "answered",
+      "expected_answer_style": "extractive",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -80,6 +96,7 @@
       "id": "supported_repo_assist_limits",
       "query": "What does repo-assist use and not use?",
       "expected_status_family": "answered",
+      "expected_answer_style": "extractive",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -89,15 +106,132 @@
       "id": "supported_hidden_eval_seed_runner",
       "query": "What does hidden-eval-seed-run do?",
       "expected_status_family": "answered",
+      "expected_answer_style": "extractive",
       "expected_requires_citations": true,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
       "notes": "Repo-local hidden-eval command query; must not expose private targets."
     },
     {
+      "id": "supported_repo_assist_no_web",
+      "query": "Does repo-assist use web?",
+      "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "does not use web retrieval"
+      ],
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-assist capability-limit query; must answer directly from local docs."
+    },
+    {
+      "id": "supported_repo_assist_no_model_backend",
+      "query": "Does repo-assist use model backend generation?",
+      "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "does not use web retrieval or model/backend generation"
+      ],
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Repo-assist model/backend limit query; must not imply model generation."
+    },
+    {
+      "id": "supported_retrieval_answer_semantic_limit",
+      "query": "Is retrieval-answer full semantic truth verification?",
+      "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "not full semantic truth verification"
+      ],
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Semantic-truth caveat query; must preserve limited lexical support wording."
+    },
+    {
+      "id": "supported_sft_positive_status",
+      "query": "Is SFT-positive available?",
+      "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "SFT-positive eligibility remains zero"
+      ],
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Trajectory-quality/training eligibility status query; must not inflate SFT-positive."
+    },
+    {
+      "id": "supported_training_status",
+      "query": "Is training ready?",
+      "expected_status_family": "answered",
+      "expected_answer_style": "direct_template",
+      "expected_answer_contains": [
+        "No training, SFT, DPO, RLVR, or model-weight improvement has happened"
+      ],
+      "expected_requires_citations": true,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Training-readiness truth-limit query; must not claim training readiness."
+    },
+    {
+      "id": "unsupported_current_world_answerability",
+      "query": "Can this answer current world news?",
+      "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Current-world capability query; must abstain because web/current retrieval is out of scope."
+    },
+    {
+      "id": "unsupported_external_current_answerability",
+      "query": "Can repo-assist answer latest internet facts?",
+      "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Latest internet fact query; must abstain because current/external evidence is out of scope."
+    },
+    {
+      "id": "unsupported_no_template_external",
+      "query": "Did a new GPU launch today?",
+      "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Unsupported current external fact; must not trigger a repo-status direct template."
+    },
+    {
+      "id": "unsupported_weather_today",
+      "query": "What is today's weather?",
+      "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Current weather query; local repo retrieval must abstain."
+    },
+    {
+      "id": "unsupported_phase_b_world_news_mixed",
+      "query": "Has Phase B started in today's world news?",
+      "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
+      "expected_requires_citations": false,
+      "expected_uses_web": false,
+      "expected_uses_model_backend": false,
+      "notes": "Mixed repo/current-world query; current-world marker should force abstention rather than direct template."
+    },
+    {
       "id": "unsupported_world_news",
       "query": "What happened in today's world news?",
       "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
       "expected_requires_citations": false,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -107,6 +241,7 @@
       "id": "unsupported_latest_model",
       "query": "What is the latest OpenAI model?",
       "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
       "expected_requires_citations": false,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -116,6 +251,7 @@
       "id": "unsupported_stock_price",
       "query": "What is the current stock price of RTX 6000?",
       "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
       "expected_requires_citations": false,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,
@@ -125,6 +261,7 @@
       "id": "unsupported_gpu_purchase_today",
       "query": "Should I buy a new GPU today from current market prices?",
       "expected_status_family": "unsupported",
+      "expected_answer_style": "abstention",
       "expected_requires_citations": false,
       "expected_uses_web": false,
       "expected_uses_model_backend": false,

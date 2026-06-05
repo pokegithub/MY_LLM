@@ -1005,6 +1005,159 @@ def run_retrieval_answer(args):
     print("=" * 60)
 
 
+def _repo_assist_direct_answer_spec(query: str):
+    lowered = (query or "").lower()
+    if "phase b" in lowered and any(term in lowered for term in ("started", "active", "start")):
+        return {
+            "intent": "phase_status",
+            "answer": "No. Phase B has not started.",
+            "evidence_phrases": ("phase b has not started",),
+            "template_confidence": "high",
+        }
+    if "agent-backend-smoke" in lowered and any(term in lowered for term in ("prove", "proof", "quality")):
+        return {
+            "intent": "model_quality_proof",
+            "answer": "No. The smoke command does not claim model quality.",
+            "evidence_phrases": ("claim model quality",),
+            "template_confidence": "high",
+        }
+    if "model quality" in lowered and any(term in lowered for term in ("prove", "proof", "proven")):
+        return {
+            "intent": "model_quality_proof",
+            "answer": "No. It is not model-quality proof.",
+            "evidence_phrases": ("does not claim phase b, model quality", "not model-quality evidence"),
+            "template_confidence": "medium",
+        }
+    if "compile-source" in lowered and any(term in lowered for term in ("what", "do", "does", "explain")):
+        return {
+            "intent": "command_explanation_compile_source",
+            "answer": "compile-source compiles tracked Python source files only and skips generated/artifact roots; it is not a replacement for full python -m compileall -q ..",
+            "evidence_phrases": ("compiles tracked python source files only", "not a replacement for full"),
+            "template_confidence": "high",
+        }
+    if "trajectory-quality-audit" in lowered and any(term in lowered for term in ("what", "do", "does", "explain")):
+        return {
+            "intent": "command_explanation_trajectory_quality",
+            "answer": "trajectory-quality-audit continues to report sft_positive: 0; hidden-eval, fixture, exact-tool, backendless, and smoke traces must not be inflated into positive training data.",
+            "evidence_phrases": ("continues to report `sft_positive: 0`",),
+            "template_confidence": "high",
+        }
+    if "candidate-readiness-smoke" in lowered and any(term in lowered for term in ("what", "prove", "does", "check")):
+        return {
+            "intent": "command_explanation_candidate_readiness",
+            "answer": "candidate-readiness-smoke checks one shortlisted candidate slot for local availability and pre-bakeoff structured-output readiness without selecting a winner.",
+            "evidence_phrases": ("checks one shortlisted candidate slot", "without selecting a winner"),
+            "template_confidence": "high",
+        }
+    if "repo-assist" in lowered and ("web" in lowered or "model backend" in lowered or "model/backend" in lowered):
+        return {
+            "intent": "repo_assist_capability_limit",
+            "answer": "No. repo-assist does not use web retrieval or model/backend generation.",
+            "evidence_phrases": ("does not use web retrieval", "model/backend generation"),
+            "template_confidence": "high",
+        }
+    if "retrieval-answer" in lowered and (
+        "semantic truth" in lowered
+        or "semantic verification" in lowered
+        or "full semantic" in lowered
+        or "entailment" in lowered
+    ):
+        return {
+            "intent": "semantic_truth_limit",
+            "answer": "No. Citation validity and lexical support are not full semantic truth verification.",
+            "evidence_phrases": ("not full semantic truth verification",),
+            "template_confidence": "high",
+        }
+    if "sft-positive" in lowered or "sft positive" in lowered:
+        return {
+            "intent": "sft_positive_status",
+            "answer": "No. SFT-positive eligibility remains zero.",
+            "evidence_phrases": ("sft-positive eligibility remains zero",),
+            "template_confidence": "high",
+        }
+    if "training" in lowered and any(term in lowered for term in ("ready", "started", "happened")):
+        return {
+            "intent": "training_status",
+            "answer": "No. No training, SFT, DPO, RLVR, or model-weight improvement has happened.",
+            "evidence_phrases": ("no training, sft, dpo, rlvr, model-weight improvement",),
+            "template_confidence": "high",
+        }
+    return None
+
+
+def _repo_assist_find_evidence_chunk(index: dict, evidence_phrases):
+    chunks = [
+        chunk for chunk in index.get("chunks", [])
+        if chunk.get("source_class") == "allowed"
+    ]
+    for phrase in evidence_phrases:
+        phrase_lower = phrase.lower()
+        for chunk in chunks:
+            content = str(chunk.get("content", "")).lower()
+            document_ref = str(chunk.get("document_ref", "")).lower()
+            if phrase_lower in content or phrase_lower in document_ref:
+                return chunk
+    return None
+
+
+def _repo_assist_apply_direct_template(query: str, answer_payload: dict, index: dict):
+    from retrieval.local_repo import make_citation, validate_cited_answer
+
+    if answer_payload.get("answer_status") != "answered_with_citations":
+        return answer_payload, {
+            "direct_answer_template_applied": False,
+            "direct_answer_intent": None,
+            "template_confidence": None,
+            "answer_style": "abstention",
+            "direct_answer_rejected_reason": "base_answer_not_cited_answer",
+        }, None
+    spec = _repo_assist_direct_answer_spec(query)
+    if not spec:
+        return answer_payload, {
+            "direct_answer_template_applied": False,
+            "direct_answer_intent": None,
+            "template_confidence": None,
+            "answer_style": "extractive",
+            "direct_answer_rejected_reason": None,
+        }, None
+    chunk = _repo_assist_find_evidence_chunk(index, spec["evidence_phrases"])
+    if not chunk:
+        return answer_payload, {
+            "direct_answer_template_applied": False,
+            "direct_answer_intent": spec["intent"],
+            "template_confidence": None,
+            "answer_style": "extractive",
+            "direct_answer_rejected_reason": "required_local_evidence_not_found",
+        }, None
+    citation = make_citation(chunk, 1)
+    candidate = dict(answer_payload)
+    candidate.update({
+        "answer_text": f"{spec['answer']} [{citation['citation_id']}]",
+        "citations": [citation],
+        "answer_assembly": "repo_assist_direct_template_v1",
+        "direct_answer_template_applied": True,
+        "direct_answer_intent": spec["intent"],
+        "template_confidence": spec["template_confidence"],
+        "answer_style": "direct_template",
+    })
+    validation = validate_cited_answer(candidate, index)
+    if validation.get("valid") and int(validation.get("claims_unsupported") or 0) == 0:
+        return candidate, {
+            "direct_answer_template_applied": True,
+            "direct_answer_intent": spec["intent"],
+            "template_confidence": spec["template_confidence"],
+            "answer_style": "direct_template",
+            "direct_answer_rejected_reason": None,
+        }, validation
+    return answer_payload, {
+        "direct_answer_template_applied": False,
+        "direct_answer_intent": spec["intent"],
+        "template_confidence": None,
+        "answer_style": "extractive",
+        "direct_answer_rejected_reason": validation.get("failure_reason") or "direct_template_validation_failed",
+    }, None
+
+
 def _repo_assist_payload(args):
     from retrieval.local_repo import assemble_cited_answer, load_index, validate_cited_answer
 
@@ -1016,7 +1169,20 @@ def _repo_assist_payload(args):
         workspace_root=".",
         top_k=args.limit,
     )
-    validation = validate_cited_answer(answer_payload, index)
+    direct_metadata = {
+        "direct_answer_template_applied": False,
+        "direct_answer_intent": None,
+        "template_confidence": None,
+        "answer_style": "abstention" if answer_payload.get("answer_status") != "answered_with_citations" else "extractive",
+        "direct_answer_rejected_reason": None,
+    }
+    direct_validation = None
+    answer_payload, direct_metadata, direct_validation = _repo_assist_apply_direct_template(
+        args.query,
+        answer_payload,
+        index,
+    )
+    validation = direct_validation or validate_cited_answer(answer_payload, index)
     answer_payload["answer_verification"] = validation
     return {
         "schema": "repo_assist_answer_v1",
@@ -1039,6 +1205,7 @@ def _repo_assist_payload(args):
         "verifier_valid": bool(validation.get("valid")),
         "semantic_truth_claim": validation.get("semantic_truth_claim") or "limited_or_none",
         "quality_claim": "none",
+        **direct_metadata,
         "uses_model_backend": False,
         "uses_web": False,
         "uses_vector_search": False,
@@ -1086,6 +1253,8 @@ def run_repo_assist_eval(args):
         "expected_unsupported": 0,
         "supported_queries_answered_with_citations": 0,
         "unsupported_queries_abstained": 0,
+        "direct_template_expected": 0,
+        "direct_template_applied": 0,
         "claims_unsupported_total": 0,
     }
     all_uses_web = False
@@ -1100,11 +1269,16 @@ def run_repo_assist_eval(args):
         expected_family = item.get("expected_status_family")
         expected_uses_web = bool(item.get("expected_uses_web", False))
         expected_uses_model_backend = bool(item.get("expected_uses_model_backend", False))
+        expected_answer_style = item.get("expected_answer_style")
         requires_citations = bool(item.get("expected_requires_citations", False))
         family = _repo_assist_status_family(str(payload.get("assistant_status") or ""))
         failures = []
         if family != expected_family:
             failures.append(f"status_family:{family}!={expected_family}")
+        if expected_answer_style and payload.get("answer_style") != expected_answer_style:
+            failures.append(f"answer_style:{payload.get('answer_style')}!={expected_answer_style}")
+        if expected_answer_style == "direct_template" and not payload.get("direct_answer_template_applied"):
+            failures.append("expected_direct_template_not_applied")
         if bool(payload.get("uses_web")) != expected_uses_web:
             failures.append("uses_web_mismatch")
         if bool(payload.get("uses_model_backend")) != expected_uses_model_backend:
@@ -1115,6 +1289,11 @@ def run_repo_assist_eval(args):
             failures.append("expected_cited_answer_not_verified")
         if not requires_citations and family == "unsupported" and payload.get("citations"):
             failures.append("unsupported_answer_should_not_cite")
+        if family == "answered" and int(payload.get("claims_unsupported") or 0) > 0:
+            failures.append("answered_query_has_unsupported_claims")
+        for expected_text in item.get("expected_answer_contains") or []:
+            if str(expected_text).lower() not in str(payload.get("answer_text") or "").lower():
+                failures.append("expected_answer_text_missing")
 
         all_uses_web = all_uses_web or bool(payload.get("uses_web"))
         all_uses_model_backend = all_uses_model_backend or bool(payload.get("uses_model_backend"))
@@ -1123,6 +1302,10 @@ def run_repo_assist_eval(args):
             counts["expected_answered"] += 1
         if expected_family == "unsupported":
             counts["expected_unsupported"] += 1
+        if expected_answer_style == "direct_template":
+            counts["direct_template_expected"] += 1
+        if payload.get("direct_answer_template_applied"):
+            counts["direct_template_applied"] += 1
         if expected_family == "answered" and family == "answered" and payload.get("citations"):
             counts["supported_queries_answered_with_citations"] += 1
         if expected_family == "unsupported" and family == "unsupported":
@@ -1142,6 +1325,9 @@ def run_repo_assist_eval(args):
             "citation_count": len(payload.get("citations", [])),
             "claims_unsupported": payload.get("claims_unsupported"),
             "abstention_reason": payload.get("abstention_reason"),
+            "answer_style": payload.get("answer_style"),
+            "direct_answer_template_applied": payload.get("direct_answer_template_applied"),
+            "direct_answer_intent": payload.get("direct_answer_intent"),
             "uses_web": payload.get("uses_web"),
             "uses_model_backend": payload.get("uses_model_backend"),
             "quality_claim": payload.get("quality_claim"),
@@ -1184,6 +1370,7 @@ def run_repo_assist_eval(args):
     print(f"  failed           : {counts['failed_count']}")
     print(f"  supported_cited  : {counts['supported_queries_answered_with_citations']}")
     print(f"  unsupported_abstain: {counts['unsupported_queries_abstained']}")
+    print(f"  direct_templates : {counts['direct_template_applied']}/{counts['direct_template_expected']}")
     print(f"  claims_unsupported_total: {counts['claims_unsupported_total']}")
     print(f"  uses_web         : {str(all_uses_web).lower()}")
     print(f"  uses_model_backend: {str(all_uses_model_backend).lower()}")
@@ -1212,6 +1399,10 @@ def run_repo_assist(args):
     print(f"  query              : {payload.get('query')}")
     print(f"  assistant_status   : {payload.get('assistant_status')}")
     print(f"  verifier_valid     : {str(payload.get('verifier_valid')).lower()}")
+    print(f"  answer_style       : {payload.get('answer_style')}")
+    print(f"  direct_template    : {str(payload.get('direct_answer_template_applied')).lower()}")
+    if payload.get("direct_answer_intent"):
+        print(f"  direct_intent      : {payload.get('direct_answer_intent')}")
     print("")
     print("Answer")
     if payload.get("answer_text"):

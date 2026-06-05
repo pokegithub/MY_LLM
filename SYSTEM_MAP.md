@@ -19,8 +19,8 @@
 - Command count: 50 `run.py` commands from the current argparse command choices.
 - Recent maintenance reflected:
   - `retrieval-answer` exists and uses local lexical repo-doc retrieval only.
-  - `repo-assist` exists as a user-facing local repo-doc assistant that reuses `retrieval-answer`, citation validation, and claim-support verification. It does not use web retrieval, vector search, semantic memory, model/backend generation, or code editing.
-  - `repo-assist-eval` runs the manual local query pack at `evals/repo_assist/repo_assist_manual_queries_v1.json`; it checks cited answers and abstentions without using web or model backends.
+  - `repo-assist` exists as a user-facing local repo-doc assistant that reuses `retrieval-answer`, citation validation, and claim-support verification. It also has narrow deterministic direct-answer templates for repo-status, command, and truth-limit questions. It does not use web retrieval, vector search, semantic memory, model/backend generation, or code editing.
+  - `repo-assist-eval` runs the manual local query pack at `evals/repo_assist/repo_assist_manual_queries_v1.json`; it checks cited answers, direct-template expectations, and abstentions without using web or model backends.
   - claim-level lexical support verification exists for cited answers and hidden retrieval/source eval reports.
   - `compile-source` exists as a tracked-source-only compile helper and is not a replacement for full `python -m compileall -q .`.
   - `evals/hidden/hidden_eval_seed_set_v1.jsonl` is now trackable despite the global `*.jsonl` ignore rule; hidden private targets remain separate.
@@ -274,11 +274,13 @@
 ### Phase A user-facing repo assistant update
 
 - Date: 2026-06-05
-- Scope: Added `repo-assist --query "..."` as a small user-facing local repo assistant on top of the existing retrieval answer machinery, then polished its text output into explicit status, answer, citation, claim-support, and limit sections.
+- Scope: Added `repo-assist --query "..."` as a small user-facing local repo assistant on top of the existing retrieval answer machinery, then polished its text output into explicit status, answer, citation, claim-support, and limit sections. A later direct-answer polish added deterministic evidence-bound templates for narrow repo-status, command-explanation, and truth-limit questions.
 - `repo-assist` reuses the local lexical repo-doc index, `retrieval-answer`, citation validation, and claim-level lexical support reporting. It does not use web retrieval, vector search, semantic memory, model/backend generation, code editing, or agentic planning.
 - Supported repo-local questions can return cited answers with `quality_claim: none` and `semantic_truth_claim: limited_or_none`; missing, current-world, external, weak, or source-policy-blocked evidence must abstain or return an unsupported status.
+- Direct-answer templates only fire after local evidence is found and the resulting answer still passes citation and claim-support validation. Template fields include `direct_answer_template_applied`, `direct_answer_intent`, `template_confidence`, and `answer_style`.
+- Example intended direct answer: `Has Phase B started?` -> `No. Phase B has not started.` with citations. This is a repo-doc status answer only; Phase B has not started.
 - `evals/repo_assist/repo_assist_manual_queries_v1.json` defines a small manual smoke pack for supported repo-doc queries and unsupported current/external queries.
-- `repo-assist-eval` runs that pack through the same `repo-assist` payload path and reports pass/fail counts, cited supported answers, abstained unsupported answers, and the local-only invariants (`uses_web: false`, `uses_model_backend: false`).
+- `repo-assist-eval` runs that pack through the same `repo-assist` payload path and reports pass/fail counts, cited supported answers, direct-template application counts, abstained unsupported answers, and the local-only invariants (`uses_web: false`, `uses_model_backend: false`).
 - The command is not model intelligence, not Phase B, not a bakeoff result, and not training readiness evidence.
 
 ### Phase A retrieval claim-support verifier update

@@ -88,6 +88,7 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertFalse(payload["uses_model_backend"])
         self.assertEqual(payload["citation_count"], len(payload["citations"]))
         self.assertGreater(payload["claims_checked"], 0)
+        self.assertIn(payload["answer_style"], {"extractive", "direct_template"})
 
     def test_repo_assist_abstains_for_current_world_query(self):
         indexed = self.run_command("retrieval-index-build")
@@ -107,6 +108,8 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertTrue(payload["verifier_valid"])
         self.assertFalse(payload["uses_web"])
         self.assertFalse(payload["uses_model_backend"])
+        self.assertFalse(payload["direct_answer_template_applied"])
+        self.assertEqual(payload["answer_style"], "abstention")
 
     def test_repo_assist_text_output_has_readable_sections(self):
         indexed = self.run_command("retrieval-index-build")
@@ -123,6 +126,8 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertIn("Citations", supported.stdout)
         self.assertIn("Claim support", supported.stdout)
         self.assertIn("Limits", supported.stdout)
+        self.assertIn("answer_style", supported.stdout)
+        self.assertIn("direct_template", supported.stdout)
         self.assertIn("uses_web           : false", supported.stdout)
         self.assertIn("uses_model_backend : false", supported.stdout)
 
@@ -135,6 +140,63 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertIn("unsupported_current_phase", unsupported.stdout)
         self.assertIn("Abstention reason", unsupported.stdout)
         self.assertIn("requires_external_or_current_source", unsupported.stdout)
+
+    def test_repo_assist_phase_b_query_uses_crisp_direct_answer(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        result = self.run_command(
+            "repo-assist",
+            "--query",
+            "Has Phase B started?",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["assistant_status"], "answered_with_citations")
+        self.assertTrue(payload["direct_answer_template_applied"])
+        self.assertEqual(payload["direct_answer_intent"], "phase_status")
+        self.assertEqual(payload["answer_style"], "direct_template")
+        self.assertTrue(payload["answer_text"].startswith("No. Phase B has not started."))
+        self.assertTrue(payload["citations"])
+        self.assertTrue(payload["verifier_valid"])
+        self.assertEqual(payload["claims_unsupported"], 0)
+        self.assertFalse(payload["uses_web"])
+        self.assertFalse(payload["uses_model_backend"])
+
+    def test_repo_assist_truth_limit_direct_answers_are_cited(self):
+        indexed = self.run_command("retrieval-index-build")
+        self.assertEqual(indexed.returncode, 0, indexed.stderr + indexed.stdout)
+
+        model_quality = self.run_command(
+            "repo-assist",
+            "--query",
+            "Does agent-backend-smoke prove model quality?",
+            "--json",
+        )
+        self.assertEqual(model_quality.returncode, 0, model_quality.stderr + model_quality.stdout)
+        quality_payload = json.loads(model_quality.stdout)
+        self.assertTrue(quality_payload["direct_answer_template_applied"])
+        self.assertEqual(quality_payload["direct_answer_intent"], "model_quality_proof")
+        self.assertIn("does not claim model quality", quality_payload["answer_text"])
+        self.assertTrue(quality_payload["citations"])
+        self.assertTrue(quality_payload["verifier_valid"])
+        self.assertEqual(quality_payload["claims_unsupported"], 0)
+        self.assertFalse(quality_payload["model_quality_proven"])
+
+        semantic = self.run_command(
+            "repo-assist",
+            "--query",
+            "Is retrieval-answer full semantic truth verification?",
+            "--json",
+        )
+        self.assertEqual(semantic.returncode, 0, semantic.stderr + semantic.stdout)
+        semantic_payload = json.loads(semantic.stdout)
+        self.assertTrue(semantic_payload["direct_answer_template_applied"])
+        self.assertEqual(semantic_payload["direct_answer_intent"], "semantic_truth_limit")
+        self.assertIn("not full semantic truth verification", semantic_payload["answer_text"])
+        self.assertEqual(semantic_payload["semantic_truth_claim"], "limited_or_none")
+        self.assertEqual(semantic_payload["claims_unsupported"], 0)
 
     def test_repo_assist_command_explanation_preserves_truth_limits(self):
         indexed = self.run_command("retrieval-index-build")
@@ -150,6 +212,8 @@ class CLITruthfulnessTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["assistant_status"], "answered_with_citations")
         self.assertIn("compile-source", payload["answer_text"])
+        self.assertTrue(payload["direct_answer_template_applied"])
+        self.assertEqual(payload["answer_style"], "direct_template")
         self.assertTrue(payload["citations"])
         self.assertEqual(payload["quality_claim"], "none")
         self.assertFalse(payload["phase_b_started"])
@@ -167,6 +231,9 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertGreaterEqual(counts["query_count"], 10)
         self.assertEqual(counts["failed_count"], 0)
         self.assertEqual(counts["passed_count"], counts["query_count"])
+        self.assertGreater(counts["direct_template_expected"], 0)
+        self.assertEqual(counts["direct_template_applied"], counts["direct_template_expected"])
+        self.assertEqual(counts["claims_unsupported_total"], 0)
         self.assertEqual(
             counts["supported_queries_answered_with_citations"],
             counts["expected_answered"],
