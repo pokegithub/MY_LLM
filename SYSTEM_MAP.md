@@ -14,8 +14,8 @@
 ### Last synchronization
 
 - Date: 2026-06-05
-- Scope: Documentation synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, low-risk cleanup passes, user-facing `repo-assist` command, and manual `repo-assist-eval` query pack. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not claim Phase B, model quality, training readiness, or SFT-positive eligibility.
-- Module count: 101 tracked Python source files, including tests and hidden fixture modules; `.venv`, caches, checkpoints, downloaded models, and run artifacts are excluded.
+- Scope: Documentation synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, low-risk cleanup passes, user-facing `repo-assist` command, manual `repo-assist-eval` query pack, and Lightning AI free-credit cloud-prep guardrails. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not claim Phase B, model quality, training readiness, paid cloud readiness, or SFT-positive eligibility.
+- Module count: 103 tracked/source-intended Python files, including tests and hidden fixture modules; `.venv`, caches, checkpoints, downloaded models, and run artifacts are excluded.
 - Command count: 50 `run.py` commands from the current argparse command choices.
 - Recent maintenance reflected:
   - `retrieval-answer` exists and uses local lexical repo-doc retrieval only.
@@ -27,6 +27,7 @@
   - duplicated test-only fake Transformers scaffolding was moved into `tests/helpers/fake_transformers.py`.
   - Qwen2.5-Coder 0.5B and 1.5B small-model smoke evidence exists, but both passed `0` backend-routed hidden coding verifier items.
   - `model_selection/local_small_model_stop_go_memo_v1.md` records the local RTX 2050 stop/go decision: stop local small-model escalation for now and focus on retrieval/citation truthfulness.
+  - `cloud/lightning_ai/` prepares a dry-run-first Lightning AI free-credit cloud readiness path with manual login, 15-credit budget guardrails, no credential storage, and no automatic paid job start.
 - Phase status: Phase A remains active. Phase B has not started. No training, SFT, DPO, RLVR, model-weight improvement, full 7B/14B bakeoff, legal-clearance claim, or SFT-positive trajectory dataset exists.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -282,6 +283,15 @@
 - `evals/repo_assist/repo_assist_manual_queries_v1.json` defines a small manual smoke pack for supported repo-doc queries and unsupported current/external queries.
 - `repo-assist-eval` runs that pack through the same `repo-assist` payload path and reports pass/fail counts, cited supported answers, direct-template application counts, abstained unsupported answers, and the local-only invariants (`uses_web: false`, `uses_model_backend: false`).
 - The command is not model intelligence, not Phase B, not a bakeoff result, and not training readiness evidence.
+
+### Phase A Lightning AI free-credit cloud prep update
+
+- Date: 2026-06-05
+- Scope: Added `cloud/lightning_ai/` as a dry-run-first preparation layer for possible Lightning AI candidate-readiness smoke work using only user-verified free credits.
+- `cloud/lightning_ai/cloud_readiness_runner.py` checks local environment, Lightning/auth indicators, free-credit budget evidence, allowed task class, candidate model path presence, and a safe smoke command plan. It does not ask for passwords, store credentials, start jobs by default, or claim model quality.
+- `cloud/lightning_ai/gpu_policy_v1.json` enforces `credit_budget_max: 15`, free-credit-only use, paid-overage blocking, unknown-price/unknown-credit fail-closed behavior, manual execute confirmation, allowed smoke task classes, and blocked training/serving/full-bakeoff task classes.
+- Execute mode requires explicit `--execute`, `MYLLM_CLOUD_CONFIRM_EXECUTE=YES`, `MYLLM_CLOUD_MAX_CREDITS=15`, manual auth confirmation, and verified or manually confirmed free-credit/price evidence. Dry-run/check/plan modes may report missing auth or unknown credits without starting work.
+- This cloud prep does not start Phase B, training, SFT, DPO, RLVR, production serving, or the full 7B/14B bakeoff. It is a guardrail layer for future manually approved cloud smoke only.
 
 ### Phase A retrieval claim-support verifier update
 

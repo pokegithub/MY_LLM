@@ -1,0 +1,40 @@
+{
+  "schema": "cloud_candidate_readiness_example_v1",
+  "provider": "lightning_ai",
+  "mode_default": "dry_run",
+  "free_credit_budget_max": 15,
+  "require_free_credit_only": true,
+  "allow_paid_overage": false,
+  "manual_login_required": true,
+  "credential_storage_allowed": false,
+  "candidate_model_path": "./run_artifacts/local_models/qwen2.5-coder-0.5b-instruct",
+  "gpu_selection_policy": "cheapest_compatible_gpu_after_manual_price_and_credit_confirmation",
+  "allowed_task_classes": [
+    "backend_smoke",
+    "candidate_readiness_smoke",
+    "repo_assist_eval",
+    "hidden_eval_seed_run",
+    "trajectory_quality_audit"
+  ],
+  "blocked_task_classes": [
+    "train",
+    "sft",
+    "dpo",
+    "distill",
+    "improve",
+    "rlvr",
+    "full_bakeoff",
+    "production_serving"
+  ],
+  "allowed_plan_commands": [
+    "python run.py status",
+    "python run.py deps",
+    "python run.py compile-source",
+    "python run.py repo-assist-eval",
+    "python run.py hidden-eval-seed-run",
+    "python run.py trajectory-quality-audit",
+    "python run.py candidate-readiness-smoke",
+    "python run.py agent-backend-smoke"
+  ],
+  "quality_claim": "none"
+}
