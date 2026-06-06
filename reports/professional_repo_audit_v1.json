@@ -1,0 +1,81 @@
+{
+  "schema": "professional_repo_audit_v1",
+  "maturity_score": 72,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "tracked_file_count": 182,
+  "tracked_python_count": 103,
+  "test_result": {
+    "passed": 237,
+    "skipped": 1
+  },
+  "trajectory_quality": {
+    "scanned": 1295,
+    "sft_positive": 0,
+    "rejected_positive": 1295
+  },
+  "high_priority_findings": [
+    "run.py is 2704 lines and mixes CLI parsing, output formatting, report writing, and command implementation",
+    "large modules create handoff risk: train.py, download_data.py, agent/backend.py, eval_harness/hidden_seed_runner.py, retrieval/local_repo.py",
+    "recent accepted reports remain untracked and need intentional commit/archive decision",
+    "hidden-eval and retrieval sensitive code paths are dense and should be split only with strong tests"
+  ],
+  "medium_priority_findings": [
+    "broad except Exception blocks need classification before cleanup",
+    "reports directory is flat and needs an index/lifecycle policy",
+    "config names distinguish examples from active configs only by convention",
+    "large generated roots consume substantial disk but are ignored correctly"
+  ],
+  "low_priority_findings": [
+    "some tracked runtime artifacts such as loss_history.json and tokenizer_data need ownership review",
+    "large test classes are useful but eventually should be split by behavior area"
+  ],
+  "cleanup_passes": [
+    {
+      "name": "zero_risk_hygiene",
+      "risk": "low",
+      "local_only": true,
+      "summary": "decide accepted report staging/archive status and verify no model files are staged"
+    },
+    {
+      "name": "report_docs_cleanup",
+      "risk": "low",
+      "local_only": true,
+      "summary": "add reports index and sync canonical Phase A evidence"
+    },
+    {
+      "name": "code_quality_cleanup",
+      "risk": "medium",
+      "local_only": true,
+      "summary": "split run.py command handlers and classify broad exceptions after tests"
+    },
+    {
+      "name": "boundary_cleanup",
+      "risk": "medium_to_high",
+      "local_only": true,
+      "summary": "split hidden eval and retrieval dense modules while preserving privacy/source-policy behavior"
+    },
+    {
+      "name": "final_pre_cloud_professional_checkpoint",
+      "risk": "low",
+      "local_only": true,
+      "summary": "clean git status, command inventory, full verification, no model files staged"
+    }
+  ],
+  "do_not_touch": [
+    "agent/trajectory_quality.py",
+    "evals/hidden/private/hidden_eval_private_targets_v1.json",
+    "agent/backend.py",
+    "agent/orchestrator.py",
+    "retrieval/local_repo.py",
+    "eval_harness/hidden_seed_runner.py",
+    "backend_integration/",
+    "retrieval_design/",
+    "data_governance/",
+    "cloud/lightning_ai/"
+  ],
+  "next_recommended_package": "reports index and accepted-artifact staging hygiene"
+}

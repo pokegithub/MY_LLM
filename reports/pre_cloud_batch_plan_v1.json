@@ -1,0 +1,58 @@
+{
+  "schema": "pre_cloud_batch_plan_v1",
+  "cloud_deferred": true,
+  "phase_b_started": false,
+  "training_allowed": false,
+  "training_recommended": false,
+  "model_quality_proven": false,
+  "sft_positive_required_before_training": true,
+  "current_sft_positive": 0,
+  "future_cloud_steps": [
+    "environment_gpu_check",
+    "budget_credit_confirmation",
+    "git_pull_latest_repo",
+    "verify_7b_backend_config",
+    "ensure_or_manually_approve_qwen2_5_coder_7b_model_path",
+    "run_7b_candidate_readiness_smoke",
+    "run_7b_agent_backend_smoke",
+    "run_7b_targeted_rerun_hidden_code_repair_001_and_hidden_retrieval_002",
+    "optionally_run_full_7b_hidden_eval_seed_run",
+    "consider_14b_only_after_budget_user_disk_and_time_review",
+    "do_not_train"
+  ],
+  "stop_conditions": [
+    "credits_low_or_unknown",
+    "paid_overage_risk_unclear",
+    "gpu_not_rtx_6000_class_or_insufficient_vram",
+    "repo_dirty_unexpectedly",
+    "7b_model_missing_without_user_redownload_approval",
+    "any_command_attempts_training",
+    "candidate_readiness_fails_unexpectedly",
+    "agent_backend_smoke_fails_unexpectedly",
+    "private_leakage_true",
+    "sft_positive_changes_without_review",
+    "hidden_private_targets_exposed",
+    "model_quality_or_phase_b_claim_appears"
+  ],
+  "required_outputs": [
+    "gpu_summary",
+    "credit_usage_estimate",
+    "7b_candidate_readiness_smoke_result",
+    "7b_agent_backend_smoke_result",
+    "7b_targeted_rerun_delta",
+    "7b_full_hidden_eval_summary_if_run",
+    "trajectory_quality_summary",
+    "failure_report_paths",
+    "final_git_status"
+  ],
+  "blocked_commands": [
+    "train",
+    "sft",
+    "dpo",
+    "distill",
+    "improve",
+    "rlvr",
+    "model_weight_update"
+  ],
+  "quality_claim": "none"
+}

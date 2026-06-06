@@ -1,0 +1,49 @@
+{
+  "targeted_rerun_completed": true,
+  "previous_summary_path": "E:\\MY_LLM\\run_artifacts\\hidden_eval_runs\\hidden_eval_seed_run_1780723827_fb003cb2\\summary.json",
+  "new_summary_path": "E:\\MY_LLM\\run_artifacts\\hidden_eval_runs\\hidden_eval_seed_run_1780724816_2ed25a59\\summary.json",
+  "delta_report_path": "E:\\MY_LLM\\run_artifacts\\hidden_eval_runs\\hidden_eval_seed_run_1780724816_2ed25a59\\targeted_rerun_delta.json",
+  "seeds_rerun": [
+    "hidden_code_repair_001",
+    "hidden_retrieval_002"
+  ],
+  "seed_results": {
+    "hidden_code_repair_001": {
+      "previous_status": "blocked_unverified",
+      "new_status": "blocked_unverified",
+      "verifier_reached": false,
+      "verifier_passed": false,
+      "failure_category": "malformed_candidate_output",
+      "failure_diagnostics_reported": true,
+      "repair_prompt_includes_verifier_feedback": false,
+      "repair_prompt_includes_failure_class": false,
+      "training_use_allowed": false
+    },
+    "hidden_retrieval_002": {
+      "previous_status": "blocked_unverified",
+      "new_status": "blocked_unverified",
+      "verifier_reached": true,
+      "verifier_passed": false,
+      "answer_status": "abstained_due_to_contradiction",
+      "answer_support_quality": "contradicted",
+      "contradiction_detected": true,
+      "retrieval_supported": false,
+      "retrieval_abstained": true,
+      "citation_count": 2,
+      "claims_contradicted": 1,
+      "training_use_allowed": false
+    }
+  },
+  "improved_count": 0,
+  "regressed_count": 0,
+  "unchanged_count": 2,
+  "private_leakage": false,
+  "sft_positive": 0,
+  "phase_b_started": false,
+  "training_recommended": false,
+  "training_executed": false,
+  "model_quality_proven": false,
+  "tests_passed": 237,
+  "tests_skipped": 1,
+  "next_recommended_action": "optional_manual_cloud_7b_targeted_rerun_later_or_continue_local_repo_workflow"
+}

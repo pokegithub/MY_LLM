@@ -1,0 +1,67 @@
+{
+  "schema": "reports_index_v1",
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "current_truth_state": {
+    "phase_a_active": true,
+    "phase_b_started": false,
+    "sft_positive": 0,
+    "training_ready": false,
+    "cloud_deferred": true,
+    "hidden_eval_traces_training_positive": false
+  },
+  "canonical_reports": [
+    {
+      "path": "reports/phase_a_final_checkpoint_v1.md",
+      "category": "phase_a_checkpoint",
+      "status": "canonical_current_handoff_evidence"
+    },
+    {
+      "path": "reports/professional_repo_audit_v1.md",
+      "category": "repo_cleanliness_audit",
+      "status": "canonical_current_cleanup_evidence"
+    },
+    {
+      "path": "reports/pre_cloud_batch_plan_v1.md",
+      "category": "future_cloud_plan",
+      "status": "canonical_future_work_checklist"
+    },
+    {
+      "path": "reports/cloud_qwen2_5_coder_7b_evidence_v1.md",
+      "category": "cloud_evidence_snapshot",
+      "status": "canonical_supporting_evidence"
+    }
+  ],
+  "supporting_reports": [
+    "reports/repair_loop_diagnostics_v1.md",
+    "reports/repair_loop_prompt_critique_v1.md",
+    "reports/hidden_eval_targeted_rerun_v1.md",
+    "reports/post_repair_targeted_rerun_checkpoint_v1.md"
+  ],
+  "machine_readable_companions": [
+    "reports/cloud_qwen2_5_coder_7b_evidence_v1.json",
+    "reports/pre_cloud_batch_plan_v1.json",
+    "reports/professional_repo_audit_v1.json",
+    "reports/post_repair_targeted_rerun_checkpoint_v1.json"
+  ],
+  "generated_artifact_policy": {
+    "generated_run_reports": "keep_under_run_artifacts_not_committed_wholesale",
+    "model_artifacts": "never_track",
+    "cloud_artifacts": "summarize_in_reviewed_reports_not_committed_wholesale"
+  },
+  "reading_order": [
+    "SYSTEM_MAP.md",
+    "reports/index_v1.md",
+    "reports/phase_a_final_checkpoint_v1.md",
+    "reports/professional_repo_audit_v1.md",
+    "reports/pre_cloud_batch_plan_v1.md",
+    "reports/cloud_qwen2_5_coder_7b_evidence_v1.md",
+    "reports/repair_loop_diagnostics_v1.md",
+    "reports/repair_loop_prompt_critique_v1.md",
+    "reports/hidden_eval_targeted_rerun_v1.md",
+    "reports/post_repair_targeted_rerun_checkpoint_v1.md"
+  ]
+}

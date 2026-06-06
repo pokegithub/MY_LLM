@@ -34,6 +34,8 @@
   - `reports/repair_loop_diagnostics_v1.md` documents the repair-loop diagnostics improvement: failed repair attempts now report clearer verifier-failure evidence while keeping verifier authority, rollback behavior, hidden-eval privacy, and training exclusion intact.
   - `reports/repair_loop_prompt_critique_v1.md` documents the repair-loop prompt/critique improvement: repair attempts receive clearer verifier feedback and retry-budget reminders while preserving verifier authority, rollback behavior, hidden-eval privacy, and training exclusion.
   - `hidden-eval-rerun-failed` reruns selected non-passed hidden-eval seeds from a previous public summary and writes a public-safe delta report; it does not expose hidden answers, train, start Phase B, or make model-quality claims.
+  - `reports/index_v1.md` is the canonical report inventory and lifecycle guide for Phase A handoff evidence, supporting diagnostics, historical reports, and generated artifact policy.
+  - `reports/pre_cloud_batch_plan_v1.md` is the local pre-cloud batch checklist for a future manually approved Lightning/Linux session; cloud is deferred, training is not allowed, Phase B has not started, and no model-quality claim is made.
 - Phase status: Phase A remains active. Phase B has not started. No training, SFT, DPO, RLVR, model-weight improvement, full 7B/14B bakeoff, legal-clearance claim, or SFT-positive trajectory dataset exists.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -310,6 +312,14 @@
 - Remaining failures: `hidden_code_repair_001` failed the coding repair verifier, and `hidden_retrieval_002` exposed a contradicted retrieval answer status issue that is tightened locally by downgrading contradicted answers away from normal `answered_with_citations` support.
 - This evidence does not prove model quality, does not create SFT-positive data, does not make training ready, and does not start Phase B.
 - No training, SFT, DPO, RLVR, model-weight improvement has happened; training is not ready.
+
+### Phase A pre-cloud batch plan update
+
+- Date: 2026-06-06
+- Scope: Added `reports/pre_cloud_batch_plan_v1.md` with JSON companion as a local checklist for one future batched cloud session. This is planning only: no cloud command was run, no model was downloaded, no training was started, and Phase B did not start.
+- The plan batches future Lightning/Linux checks in order: GPU/budget confirmation, repo update, 7B config/model-path verification, 7B candidate-readiness smoke, 7B backend smoke, targeted hidden-eval rerun for `hidden_code_repair_001` and `hidden_retrieval_002`, optional full 7B hidden-eval, and 14B consideration only behind a manual budget/disk/user-approval gate.
+- Stop conditions include low/unknown credits, insufficient GPU/VRAM, dirty repo state, missing 7B model without approval, any training attempt, failed readiness smoke, private leakage, unexpected SFT-positive change, hidden private exposure, or any Phase B/model-quality/training-readiness claim.
+- Training remains blocked: SFT-positive is 0, legal/governance is not ready, hidden eval traces are not training data, and hidden/failed traces remain non-training-positive.
 
 ### Phase A repair-loop diagnostics update
 
