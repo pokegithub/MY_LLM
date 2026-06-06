@@ -63,9 +63,12 @@ import importlib.util
 import subprocess
 
 from core.config_manager import ConfigManager
-from core.dependency_checks import check_requirement_file
 from config import apply_overrides, runtime_config_dict
 from cli.output import format_bool, print_banner
+from cli.commands.compile_source import run_compile_source as cli_run_compile_source
+from cli.commands.status import collect_backend_dependency_checks
+from cli.commands.status import run_deps as cli_run_deps
+from cli.commands.status import show_status as cli_show_status
 from security.validator import ValidationError, get_allowed_data_roots, safe_load_json
 
 
@@ -101,7 +104,6 @@ DEFAULT_AGENT_REPORT_ROOT = os.path.join(
     "agent",
 )
 REPORT_PATH = None
-BACKEND_REQUIREMENTS_PATH = "./requirements-backend.txt"
 DEFAULT_REPO_ASSIST_QUERY_PACK = "./evals/repo_assist/repo_assist_manual_queries_v1.json"
 
 
@@ -240,301 +242,6 @@ def check_dependencies(command: str):
         if not _is_available(pkg):
             if not OUTPUT_JSON:
                 print(f"  TIP: pip install {name}  (for better tokenization)")
-
-
-STATUS_TARGETS = [
-    ("Tokenizer", "./tokenizer_data/encoder.json"),
-    ("Data cache", "./data_cache/tokens"),
-    ("Val cache", "./data_cache/val_tokens"),
-    ("Pretrain ckpt", "./checkpoints"),
-    ("SFT ckpt", "./sft_checkpoints"),
-    ("DPO ckpt", "./dpo_checkpoints"),
-    ("Improved ckpt", "./improved_checkpoints"),
-    ("Eval results", "./eval_results/eval_report.json"),
-]
-
-
-def collect_status_checks():
-    """Collect filesystem-backed status rows without printing."""
-    rows = []
-    for name, path in STATUS_TARGETS:
-        row = {
-            "name": name,
-            "path": path,
-            "exists": os.path.exists(path),
-            "is_dir": os.path.isdir(path),
-            "file_count": 0,
-            "size_mb": 0.0,
-        }
-        if row["exists"]:
-            if row["is_dir"]:
-                files = os.listdir(path)
-                row["file_count"] = len(files)
-                row["size_mb"] = sum(
-                    os.path.getsize(os.path.join(path, f))
-                    for f in files
-                    if os.path.isfile(os.path.join(path, f))
-                ) / 1e6
-            else:
-                row["size_mb"] = os.path.getsize(path) / 1e6
-        rows.append(row)
-    return rows
-
-
-def collect_dependency_checks(requirements_path: str = "./requirement.txt"):
-    """Collect declared dependency drift for status/preflight visibility."""
-    return check_requirement_file(requirements_path)
-
-
-def collect_backend_dependency_checks(requirements_path: str = BACKEND_REQUIREMENTS_PATH):
-    """Collect optional backend dependency drift without gating non-backend commands."""
-    report = check_requirement_file(requirements_path)
-    report["optional"] = True
-    report["purpose"] = "local_transformers_backend"
-    return report
-
-
-def _print_dependency_summary(report):
-    print("\nDEPENDENCY ENVIRONMENT")
-    print(f"  requirements: {os.path.abspath(report['path'])}")
-    if not report["exists"]:
-        print("  [UNVERIFIED] requirement file is missing")
-        return
-    summary = report["summary"]
-    print(
-        "  summary     : "
-        f"pass={summary['pass']} fail={summary['fail']} "
-        f"unverified={summary['unverified']}"
-    )
-    for item in report["items"]:
-        status = str(item["status"]).upper()
-        installed = item["installed"] if item["installed"] is not None else "missing"
-        print(
-            f"  [{status:<10}] {item['package']:<12} "
-            f"installed={installed} required={item['required']}"
-        )
-
-
-def _print_backend_dependency_summary(report):
-    print("\nOPTIONAL BACKEND DEPENDENCIES")
-    print(f"  requirements: {os.path.abspath(report['path'])}")
-    if not report["exists"]:
-        print("  [UNVERIFIED] optional backend requirement file is missing")
-        return
-    summary = report["summary"]
-    print(
-        "  summary     : "
-        f"pass={summary['pass']} fail={summary['fail']} "
-        f"unverified={summary['unverified']}"
-    )
-    for item in report["items"]:
-        status = str(item["status"]).upper()
-        installed = item["installed"] if item["installed"] is not None else "missing"
-        print(
-            f"  [{status:<10}] {item['package']:<12} "
-            f"installed={installed} required={item['required']}"
-        )
-    print("  gates       : backend-specific only; normal repo commands remain fail-closed if unavailable")
-
-
-def _next_status_action(dependency_ok: bool):
-    if not os.path.exists("./tokenizer_data/encoder.json"):
-        return {
-            "command": "python run.py tokenizer",
-            "ready_for_training": False,
-            "reason": "tokenizer artifacts are missing",
-        }
-    if not os.path.exists("./data_cache/tokens"):
-        return {
-            "command": "python run.py download",
-            "ready_for_training": False,
-            "reason": "token cache is missing",
-        }
-    if not os.path.exists("./data_cache/token_artifacts_manifest.json"):
-        return {
-            "command": "python run.py token-manifest",
-            "ready_for_training": False,
-            "reason": "token artifact manifest is missing",
-        }
-    if not dependency_ok:
-        return {
-            "command": "fix dependency drift, then run: python run.py train-preflight",
-            "ready_for_training": False,
-            "reason": "declared dependency environment is not satisfied",
-        }
-    if not os.path.exists("./checkpoints"):
-        return {
-            "command": "python run.py train-preflight",
-            "ready_for_training": False,
-            "reason": "preflight must pass before training; checkpoint directory is missing",
-        }
-    if not os.path.exists("./sft_checkpoints"):
-        return {
-            "command": "python run.py sft",
-            "ready_for_training": False,
-            "reason": "base checkpoint exists; SFT checkpoint is missing",
-        }
-    if not os.path.exists("./dpo_checkpoints"):
-        return {
-            "command": "python run.py dpo",
-            "ready_for_training": False,
-            "reason": "SFT checkpoint exists; DPO checkpoint is missing",
-        }
-    return {
-        "command": "python run.py eval",
-        "ready_for_training": False,
-        "reason": "training artifacts exist; evaluation is next",
-    }
-
-
-def build_status_report():
-    dependency_report = collect_dependency_checks()
-    backend_dependency_report = collect_backend_dependency_checks()
-    return {
-        "schema": "pipeline_status_v2",
-        "status_checks": collect_status_checks(),
-        "dependency_environment": dependency_report,
-        "optional_backend_dependency_environment": backend_dependency_report,
-        "next_action": _next_status_action(dependency_report["ok"]),
-        "training_quality_claim": "none",
-    }
-
-
-def show_status():
-    """Show current pipeline status."""
-    report = build_status_report()
-    if OUTPUT_JSON:
-        _emit_json(report)
-        return
-
-    print_banner("PIPELINE STATUS")
-
-    for row in collect_status_checks():
-        name = row["name"]
-        if row["exists"]:
-            if row["is_dir"]:
-                print(
-                    f"  [OK]      {name:<20} "
-                    f"{row['file_count']} files, {row['size_mb']:.1f}MB"
-                )
-            else:
-                print(f"  [OK]      {name:<20} {row['size_mb']:.1f}MB")
-        else:
-            print(f"  [MISSING] {name:<20} not found")
-
-    print("=" * 60)
-    dependency_report = report["dependency_environment"]
-    _print_dependency_summary(dependency_report)
-    _print_backend_dependency_summary(report["optional_backend_dependency_environment"])
-
-    next_action = report["next_action"]
-    print(f"\n  NEXT: {next_action['command']}")
-    if next_action["command"] == "python run.py token-manifest":
-        print("  Training remains NOT READY until train-preflight passes.")
-    elif not dependency_report["ok"]:
-        print("  Do not start training from this environment yet.")
-    elif next_action["command"] == "python run.py train-preflight":
-        print("  Only run python run.py train after preflight passes.")
-
-
-def run_deps():
-    """Show declared dependency satisfaction."""
-    report = collect_dependency_checks()
-    backend_report = collect_backend_dependency_checks()
-    report["optional_backend_dependency_environment"] = backend_report
-    if OUTPUT_JSON:
-        _emit_json(report)
-        if not report["ok"]:
-            sys.exit(1)
-        return
-
-    _print_dependency_summary(report)
-    _print_backend_dependency_summary(backend_report)
-    if not report["ok"]:
-        print("\nDEPENDENCY CHECK FAILED")
-        sys.exit(1)
-    print("\nDEPENDENCY CHECK PASSED")
-
-
-def run_compile_source():
-    """Compile tracked source-like Python files without scanning generated artifact roots."""
-    skipped_roots = [
-        ".venv",
-        ".git",
-        "__pycache__",
-        ".pytest_cache",
-        "run_artifacts",
-        "data_cache",
-        "tokenizer_data",
-        "checkpoints",
-        "sft_checkpoints",
-        "dpo_checkpoints",
-        "distill_checkpoints",
-        "improved_checkpoints",
-        "quantized",
-        "eval_results",
-    ]
-    result = subprocess.run(
-        ["git", "ls-files", "*.py"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        print("ERROR: git ls-files failed")
-        if result.stderr:
-            print(result.stderr.strip())
-        sys.exit(1)
-
-    tracked_paths = [
-        item.strip()
-        for item in result.stdout.splitlines()
-        if item.strip()
-    ]
-    scanned = []
-    skipped = []
-    failures = []
-    for rel_path in tracked_paths:
-        normalized = rel_path.replace("\\", "/")
-        if any(
-            normalized == root or normalized.startswith(root.rstrip("/") + "/")
-            for root in skipped_roots
-        ):
-            skipped.append(normalized)
-            continue
-        try:
-            with open(rel_path, "rb") as handle:
-                compile(handle.read(), rel_path, "exec")
-            scanned.append(normalized)
-        except Exception as exc:
-            failures.append({"path": normalized, "error": str(exc)})
-
-    payload = {
-        "schema": "source_compile_report_v1",
-        "ok": not failures,
-        "scope": "tracked_python_sources_only",
-        "full_compileall_replacement": False,
-        "scanned_count": len(scanned),
-        "skipped_count": len(skipped),
-        "skipped_generated_roots": skipped_roots,
-        "failures": failures,
-        "behavior_changed": False,
-    }
-    if OUTPUT_JSON:
-        _emit_json(payload)
-    else:
-        print_banner("SOURCE COMPILE")
-        print(f"  scope                     : {payload['scope']}")
-        print(f"  full_compileall_replacement: {format_bool(payload['full_compileall_replacement'])}")
-        print(f"  scanned                   : {payload['scanned_count']}")
-        print(f"  skipped                   : {payload['skipped_count']}")
-        print(f"  skipped_roots             : {', '.join(skipped_roots)}")
-        print(f"  ok                        : {format_bool(payload['ok'])}")
-        for failure in failures[:10]:
-            print(f"  failure                   : {failure['path']} :: {failure['error']}")
-        print("=" * 60)
-    if failures:
-        sys.exit(1)
 
 
 def _load_task_text(task: str | None, task_file: str | None) -> str:
@@ -2888,8 +2595,8 @@ Commands:
         "download-status": run_download_status,
         "token-manifest": run_token_manifest,
         "token-integrity": run_token_integrity,
-        "deps": run_deps,
-        "compile-source": run_compile_source,
+        "deps": lambda: cli_run_deps(OUTPUT_JSON, _emit_json),
+        "compile-source": lambda: cli_run_compile_source(OUTPUT_JSON, _emit_json),
         "hardware-validate": run_hardware_validate,
         "gpu-fit-validate": run_gpu_fit_validate,
         "data-governance": run_data_governance,
@@ -2909,7 +2616,7 @@ Commands:
         "benchmark-harness": run_benchmark_harness,
         "audit": run_audit,
         "full": run_full,
-        "status": show_status,
+        "status": lambda: cli_show_status(OUTPUT_JSON, _emit_json),
     }
 
     commands[args.command]()
