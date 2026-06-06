@@ -2,6 +2,7 @@ import subprocess
 import sys
 import unittest
 import json
+import tempfile
 from pathlib import Path
 
 
@@ -247,6 +248,67 @@ class CLITruthfulnessTests(unittest.TestCase):
         self.assertFalse(payload["phase_b_started"])
         self.assertFalse(payload["model_quality_proven"])
         self.assertEqual(payload["quality_claim"], "none")
+
+    def test_repo_assist_eval_auto_builds_missing_retrieval_index(self):
+        with tempfile.TemporaryDirectory() as td:
+            index_path = Path(td) / "missing" / "local_repo_docs_index_v1.json"
+            result = self.run_command(
+                "repo-assist-eval",
+                "--json",
+                "--retrieval-index-path",
+                str(index_path),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema"], "repo_assist_manual_eval_report_v1")
+        self.assertTrue(payload["retrieval_index_missing"])
+        self.assertTrue(payload["retrieval_index_built"])
+        self.assertGreaterEqual(payload["counts"]["retrieval_index_build_count"], 1)
+        self.assertEqual(payload["counts"]["failed_count"], 0)
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertFalse(payload["uses_web"])
+        self.assertFalse(payload["uses_model_backend"])
+
+    def test_hidden_eval_rerun_failed_cli_emits_delta_report(self):
+        with tempfile.TemporaryDirectory() as td:
+            previous_path = Path(td) / "previous_summary.json"
+            previous_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "hidden_eval_seed_run_v1",
+                        "run_id": "previous-run",
+                        "counts": {"passed": 0},
+                        "items": [
+                            {
+                                "item_id": "hidden_exact_001",
+                                "category": "exact_symbolic_correctness",
+                                "route_used": "exact_symbolic",
+                                "final_status": "verification_failed",
+                                "verifier_status": "failed",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_command(
+                "hidden-eval-rerun-failed",
+                "--previous-summary",
+                str(previous_path),
+                "--json",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema"], "hidden_eval_targeted_rerun_delta_v1")
+        self.assertEqual(payload["seed_ids_rerun"], ["hidden_exact_001"])
+        self.assertEqual(payload["previous_status_by_seed"]["hidden_exact_001"], "verification_failed")
+        self.assertEqual(payload["new_status_by_seed"]["hidden_exact_001"], "passed")
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertFalse(payload["training_executed"])
+        self.assertFalse(payload["phase_b_started"])
+        self.assertFalse(payload["private_leakage"])
 
     def test_status_json_reports_next_action(self):
         result = self.run_command("status", "--json")

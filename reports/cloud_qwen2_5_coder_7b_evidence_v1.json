@@ -1,0 +1,43 @@
+{
+  "schema": "cloud_qwen2_5_coder_7b_evidence_v1",
+  "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "cloud_gpu": "RTX PRO 6000 Blackwell",
+  "vram_gb_observed": 95,
+  "observed_download_size_gb": 14.2,
+  "cloud_model_path": "run_artifacts/local_models/candidates/open-dense-7b",
+  "backend_config_path": "configs/backend_cloud_qwen2_5_coder_7b.json",
+  "candidate_readiness_passed": true,
+  "backend_smoke_passed": true,
+  "hidden_eval_seed_total": 19,
+  "hidden_eval_attempted": 17,
+  "hidden_eval_passed": 15,
+  "hidden_eval_failed": 2,
+  "hidden_eval_blocked": 0,
+  "backend_routed": 2,
+  "retrieval_routed": 12,
+  "verifier_reached": 14,
+  "verifier_passed": 12,
+  "private_leakage": false,
+  "sft_positive": 0,
+  "phase_b_started": false,
+  "model_quality_proven": false,
+  "training_ready": false,
+  "quality_claim": "none",
+  "remaining_failures": [
+    {
+      "id": "hidden_code_repair_001",
+      "category": "coding_repair_loop_success",
+      "route": "coding_agent_backend",
+      "status": "verification_failed",
+      "reason": "7B chose wrong slug repair behavior; verifier rejected it."
+    },
+    {
+      "id": "hidden_retrieval_002",
+      "category": "retrieval_grounded_qa",
+      "route": "local_lexical_retrieval",
+      "status": "contradiction_detected_status_too_confident",
+      "reason": "answer_support_quality was contradicted while answer_status remained answered_with_citations before this local fix."
+    }
+  ],
+  "next_recommended_action": "fix contradiction status, keep repo-assist missing-index guard, inspect repair-loop prompt later, and consider 14B only after cheap fixes and budget review"
+}

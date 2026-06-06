@@ -33,6 +33,7 @@ from retrieval.local_repo import (
 
 
 HIDDEN_EVAL_RUN_SCHEMA = "hidden_eval_seed_run_v1"
+HIDDEN_EVAL_TARGETED_RERUN_SCHEMA = "hidden_eval_targeted_rerun_delta_v1"
 DEFAULT_QWEN_BACKEND_CONFIG = "./configs/backend_smoke_qwen2_5_coder_0_5b.json"
 DEFAULT_HIDDEN_SEED_IDS = (
     "hidden_exact_001",
@@ -83,6 +84,26 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> str:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
     return str(path.resolve())
+
+
+def _load_previous_summary(path: str) -> Dict[str, Any]:
+    summary_path = Path(path)
+    if not summary_path.is_file():
+        raise ValueError(f"previous hidden-eval summary not found: {summary_path}")
+    try:
+        with summary_path.open("r", encoding="utf-8-sig") as handle:
+            payload = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"previous hidden-eval summary is malformed JSON: {exc}") from exc
+    if payload.get("schema") != HIDDEN_EVAL_RUN_SCHEMA:
+        raise ValueError("previous hidden-eval summary schema mismatch")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise ValueError("previous hidden-eval summary requires an items list")
+    for item in items:
+        if not isinstance(item, dict) or not item.get("item_id"):
+            raise ValueError("previous hidden-eval summary contains malformed item entries")
+    return payload
 
 
 def _seed_by_id(seed_items: Sequence[Mapping[str, Any]]) -> Dict[str, Mapping[str, Any]]:
@@ -354,6 +375,8 @@ def _run_coding_item(
 
     attempts = list(payload.get("attempts") or [])
     verification = payload.get("verification") or {}
+    failure_diagnostics = payload.get("failure_diagnostics") or {}
+    verifier_ran_and_failed = bool(attempts) and not bool(verification.get("overall_passed"))
     result.update(
         {
             "final_status": "passed" if payload.get("status") == "verified_success" else str(payload.get("status") or "failed"),
@@ -365,6 +388,13 @@ def _run_coding_item(
             "agent_report_path": payload.get("report_path"),
             "trajectory_id": payload.get("run_id") if payload.get("trajectory_store", {}).get("ok") else None,
             "attempt_count": len(attempts),
+            "repair_budget_exhausted": bool(failure_diagnostics.get("repair_budget_exhausted")),
+            "failure_category": "coding_verifier_failure" if verifier_ran_and_failed else (failure_diagnostics.get("final_failure_class") or None),
+            "training_use_allowed": False,
+            "failure_diagnostics_reported": bool(failure_diagnostics),
+            "repeated_failure_signature_detected": bool(failure_diagnostics.get("repeated_failure_signature_detected")),
+            "repair_prompt_includes_verifier_feedback": bool(failure_diagnostics.get("repair_prompt_includes_verifier_feedback")),
+            "repair_prompt_includes_failure_class": bool(failure_diagnostics.get("repair_prompt_includes_failure_class")),
             "quality_claim": payload.get("quality_claim", "none"),
         }
     )
@@ -1021,6 +1051,9 @@ def run_hidden_eval_seed_execution(
             "route_used": result["route_used"],
             "final_status": result["final_status"],
             "verifier_status": result["verifier_status"],
+            "backend_routed": bool(result.get("backend_routed")),
+            "verifier_reached": bool(result.get("verifier_reached")),
+            "verifier_passed": bool(result.get("verifier_passed")),
             "backend_kind": result["backend_kind"],
             "agent_run_id": result["agent_run_id"],
             "retrieval_supported": bool(result.get("retrieval_supported")),
@@ -1041,6 +1074,14 @@ def run_hidden_eval_seed_execution(
             "contradiction_detected": bool(result.get("contradiction_detected")),
             "answer_support_quality": result.get("answer_support_quality"),
             "claim_support_level": result.get("claim_support_level"),
+            "repair_budget_exhausted": bool(result.get("repair_budget_exhausted")),
+            "failure_category": result.get("failure_category"),
+            "training_use_allowed": bool(result.get("training_use_allowed", False)),
+            "failure_diagnostics_reported": bool(result.get("failure_diagnostics_reported")),
+            "repeated_failure_signature_detected": bool(result.get("repeated_failure_signature_detected")),
+            "repair_prompt_includes_verifier_feedback": bool(result.get("repair_prompt_includes_verifier_feedback")),
+            "repair_prompt_includes_failure_class": bool(result.get("repair_prompt_includes_failure_class")),
+            "quality_claim": result.get("quality_claim", "none"),
             "private_target_used": result["private_target_used"],
             "private_target_exposed_in_public_summary": False,
             "answer_exposed_in_public_summary": False,
@@ -1081,3 +1122,122 @@ def run_hidden_eval_seed_execution(
     }
     summary["summary_report_path"] = _write_json(run_dir / "summary.json", summary)
     return summary
+
+
+def _public_status_map(summary: Mapping[str, Any]) -> Dict[str, Mapping[str, Any]]:
+    return {str(item.get("item_id")): item for item in summary.get("items", []) if item.get("item_id")}
+
+
+def _select_targeted_seed_ids(
+    previous_summary: Mapping[str, Any],
+    explicit_seed_ids: Optional[Sequence[str]],
+) -> List[str]:
+    if explicit_seed_ids:
+        return list(dict.fromkeys(str(item) for item in explicit_seed_ids))
+    return [
+        str(item.get("item_id"))
+        for item in previous_summary.get("items", [])
+        if str(item.get("final_status")) != "passed"
+    ]
+
+
+def _delta_item(
+    *,
+    item_id: str,
+    previous_item: Optional[Mapping[str, Any]],
+    new_item: Optional[Mapping[str, Any]],
+    new_summary: Mapping[str, Any],
+) -> Dict[str, Any]:
+    previous_status = str((previous_item or {}).get("final_status") or "not_in_previous_summary")
+    new_status = str((new_item or {}).get("final_status") or "not_rerun")
+    previous_passed = previous_status == "passed"
+    new_passed = new_status == "passed"
+    return {
+        "item_id": item_id,
+        "category": (new_item or previous_item or {}).get("category"),
+        "route_used": (new_item or previous_item or {}).get("route_used"),
+        "previous_status": previous_status,
+        "new_status": new_status,
+        "previous_verifier_status": (previous_item or {}).get("verifier_status"),
+        "new_verifier_status": (new_item or {}).get("verifier_status"),
+        "backend_kind": (new_item or {}).get("backend_kind") or new_summary.get("backend_kind"),
+        "model_id_or_path": new_summary.get("model_id_or_path"),
+        "failure_category": (new_item or {}).get("failure_category"),
+        "training_use_allowed": False,
+        "status_delta": "improved" if (not previous_passed and new_passed) else ("regressed" if previous_passed and not new_passed else "unchanged"),
+    }
+
+
+def run_hidden_eval_failed_seed_rerun(
+    *,
+    previous_summary_path: str,
+    seed_ids: Optional[Sequence[str]] = None,
+    workspace_root: str = ".",
+    backend_config_path: str = DEFAULT_QWEN_BACKEND_CONFIG,
+    backend_script_path: Optional[str] = None,
+    output_root: str = "./run_artifacts/hidden_eval_runs",
+    delta_report_path: Optional[str] = None,
+    use_default_agent_report_dir: bool = True,
+) -> Dict[str, Any]:
+    """Rerun only selected or previously non-passed hidden-eval seeds and report status deltas."""
+    previous_summary = _load_previous_summary(previous_summary_path)
+    selected_ids = _select_targeted_seed_ids(previous_summary, seed_ids)
+    if not selected_ids:
+        raise ValueError("previous hidden-eval summary has no non-passed items to rerun")
+
+    new_summary = run_hidden_eval_seed_execution(
+        seed_ids=tuple(selected_ids),
+        workspace_root=workspace_root,
+        backend_config_path=backend_config_path,
+        backend_script_path=backend_script_path,
+        output_root=output_root,
+        use_default_agent_report_dir=use_default_agent_report_dir,
+    )
+    previous_by_id = _public_status_map(previous_summary)
+    new_by_id = _public_status_map(new_summary)
+    items = [
+        _delta_item(
+            item_id=item_id,
+            previous_item=previous_by_id.get(item_id),
+            new_item=new_by_id.get(item_id),
+            new_summary=new_summary,
+        )
+        for item_id in selected_ids
+    ]
+    previous_status_by_seed = {item_id: item["previous_status"] for item_id, item in zip(selected_ids, items)}
+    new_status_by_seed = {item_id: item["new_status"] for item_id, item in zip(selected_ids, items)}
+    previous_passed_count = sum(1 for item in items if item["previous_status"] == "passed")
+    new_passed_count = sum(1 for item in items if item["new_status"] == "passed")
+    payload: Dict[str, Any] = {
+        "schema": HIDDEN_EVAL_TARGETED_RERUN_SCHEMA,
+        "previous_summary_path": str(Path(previous_summary_path).resolve()),
+        "previous_run_id": previous_summary.get("run_id"),
+        "new_run_id": new_summary.get("run_id"),
+        "new_summary_report_path": new_summary.get("summary_report_path"),
+        "seed_ids_rerun": selected_ids,
+        "previous_status_by_seed": previous_status_by_seed,
+        "new_status_by_seed": new_status_by_seed,
+        "improved_count": sum(1 for item in items if item["status_delta"] == "improved"),
+        "regressed_count": sum(1 for item in items if item["status_delta"] == "regressed"),
+        "unchanged_count": sum(1 for item in items if item["status_delta"] == "unchanged"),
+        "previous_passed_count": previous_passed_count,
+        "previous_summary_passed_count": int((previous_summary.get("counts") or {}).get("passed") or 0),
+        "new_passed_count_for_rerun_subset": new_passed_count,
+        "items": items,
+        "private_leakage": bool(new_summary.get("private_target_leakage")),
+        "private_target_exposed_in_public_summary": False,
+        "answer_exposed_in_public_summary": False,
+        "quality_claim": "none",
+        "training_executed": False,
+        "phase_b_started": False,
+        "model_quality_proven": False,
+        "bakeoff_executed": False,
+        "sft_positive_claim": "not_changed_by_targeted_hidden_eval_rerun",
+    }
+    report_path = (
+        Path(delta_report_path)
+        if delta_report_path
+        else Path(output_root).resolve() / str(new_summary.get("run_id")) / "targeted_rerun_delta.json"
+    )
+    payload["delta_report_path"] = _write_json(report_path, payload)
+    return payload

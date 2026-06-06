@@ -16,7 +16,7 @@ from eval_harness.hidden_eval_assets import (
     load_hidden_eval_spec,
     validate_hidden_eval_assets,
 )
-from eval_harness.hidden_seed_runner import run_hidden_eval_seed_execution
+from eval_harness.hidden_seed_runner import run_hidden_eval_failed_seed_rerun, run_hidden_eval_seed_execution
 from eval_harness.small_model_comparison import build_small_model_smoke_comparison
 
 
@@ -190,6 +190,141 @@ class HiddenEvalAssetTests(unittest.TestCase):
         self.assertEqual(report["items"][0]["final_status"], "passed")
         self.assertEqual(report["items"][0]["backend_kind"], "scripted")
         self.assertTrue(report["items"][0]["agent_run_id"])
+
+    def test_failed_hidden_eval_coding_item_reports_safe_failure_diagnostics(self):
+        wrong_math_ops = (
+            "def bounded_average(values, lower=0.0, upper=100.0):\n"
+            "    return 0.0\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            script_path = os.path.join(td, "candidate.json")
+            with open(script_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "candidate_id": "scripted-hidden-wrong",
+                        "summary": "wrong bounded average",
+                        "edits": [{"path": "math_ops.py", "new_content": wrong_math_ops}],
+                    },
+                    handle,
+                )
+            report = run_hidden_eval_seed_execution(
+                seed_ids=("hidden_code_patch_001",),
+                workspace_root=".",
+                backend_script_path=script_path,
+                output_root=os.path.join(td, "hidden_eval_runs"),
+                use_default_agent_report_dir=False,
+            )
+
+        item = report["items"][0]
+        self.assertEqual(report["counts"]["backend_routed"], 1)
+        self.assertEqual(report["counts"]["verifier_reached"], 1)
+        self.assertEqual(report["counts"]["verifier_passed"], 0)
+        self.assertEqual(item["failure_category"], "coding_verifier_failure")
+        self.assertFalse(item["training_use_allowed"])
+        self.assertTrue(item["failure_diagnostics_reported"])
+        self.assertIn("repair_prompt_includes_verifier_feedback", item)
+        self.assertIn("repair_prompt_includes_failure_class", item)
+        self.assertIn("repeated_failure_signature_detected", item)
+        self.assertFalse(item["private_target_exposed_in_public_summary"])
+        self.assertFalse(item["answer_exposed_in_public_summary"])
+        self.assertEqual(item["quality_claim"], "none")
+
+    def test_targeted_rerun_selects_only_non_passed_items_from_previous_summary(self):
+        with tempfile.TemporaryDirectory() as td:
+            previous_path = os.path.join(td, "previous_summary.json")
+            with open(previous_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema": "hidden_eval_seed_run_v1",
+                        "run_id": "previous-run",
+                        "counts": {"passed": 1},
+                        "items": [
+                            {
+                                "item_id": "hidden_exact_001",
+                                "category": "exact_symbolic_correctness",
+                                "route_used": "exact_symbolic",
+                                "final_status": "passed",
+                                "verifier_status": "passed",
+                            },
+                            {
+                                "item_id": "hidden_retrieval_002",
+                                "category": "retrieval_grounded_qa",
+                                "route_used": "local_lexical_retrieval",
+                                "final_status": "verification_failed",
+                                "verifier_status": "failed",
+                            },
+                        ],
+                    },
+                    handle,
+                )
+            report = run_hidden_eval_failed_seed_rerun(
+                previous_summary_path=previous_path,
+                workspace_root=".",
+                backend_config_path=os.path.join(td, "missing_qwen_config.json"),
+                output_root=os.path.join(td, "hidden_eval_runs"),
+                use_default_agent_report_dir=False,
+            )
+
+        self.assertEqual(report["schema"], "hidden_eval_targeted_rerun_delta_v1")
+        self.assertEqual(report["previous_run_id"], "previous-run")
+        self.assertEqual(report["seed_ids_rerun"], ["hidden_retrieval_002"])
+        self.assertEqual(set(report["previous_status_by_seed"]), {"hidden_retrieval_002"})
+        self.assertIn("hidden_retrieval_002", report["new_status_by_seed"])
+        self.assertFalse(report["private_leakage"])
+        self.assertFalse(report["training_executed"])
+        self.assertFalse(report["phase_b_started"])
+        self.assertEqual(report["quality_claim"], "none")
+        self.assertFalse(report["items"][0]["training_use_allowed"])
+        summary_text = json.dumps(report, sort_keys=True)
+        self.assertNotIn("expected_output", summary_text)
+        self.assertNotIn("behavior_assertions", summary_text)
+
+    def test_targeted_rerun_explicit_seed_ids_override_failed_selection(self):
+        with tempfile.TemporaryDirectory() as td:
+            previous_path = os.path.join(td, "previous_summary.json")
+            with open(previous_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "schema": "hidden_eval_seed_run_v1",
+                        "run_id": "previous-run",
+                        "counts": {"passed": 1},
+                        "items": [
+                            {
+                                "item_id": "hidden_retrieval_002",
+                                "category": "retrieval_grounded_qa",
+                                "route_used": "local_lexical_retrieval",
+                                "final_status": "verification_failed",
+                                "verifier_status": "failed",
+                            }
+                        ],
+                    },
+                    handle,
+                )
+            report = run_hidden_eval_failed_seed_rerun(
+                previous_summary_path=previous_path,
+                seed_ids=("hidden_exact_001",),
+                workspace_root=".",
+                backend_config_path=os.path.join(td, "missing_qwen_config.json"),
+                output_root=os.path.join(td, "hidden_eval_runs"),
+                use_default_agent_report_dir=False,
+            )
+
+        self.assertEqual(report["seed_ids_rerun"], ["hidden_exact_001"])
+        self.assertEqual(report["previous_status_by_seed"]["hidden_exact_001"], "not_in_previous_summary")
+        self.assertEqual(report["new_status_by_seed"]["hidden_exact_001"], "passed")
+        self.assertEqual(report["improved_count"], 1)
+        self.assertFalse(report["training_executed"])
+
+    def test_targeted_rerun_missing_or_malformed_previous_summary_fails_cleanly(self):
+        with tempfile.TemporaryDirectory() as td:
+            missing_path = os.path.join(td, "missing_summary.json")
+            with self.assertRaisesRegex(ValueError, "not found"):
+                run_hidden_eval_failed_seed_rerun(previous_summary_path=missing_path, output_root=td)
+            malformed_path = os.path.join(td, "malformed_summary.json")
+            with open(malformed_path, "w", encoding="utf-8") as handle:
+                handle.write("{bad json")
+            with self.assertRaisesRegex(ValueError, "malformed JSON"):
+                run_hidden_eval_failed_seed_rerun(previous_summary_path=malformed_path, output_root=td)
 
     def test_small_model_comparison_report_has_no_winner_language(self):
         baseline = {

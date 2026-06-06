@@ -18,7 +18,7 @@ from agent.backend import (
 from agent.orchestrator import solve_task
 from agent.trajectory import build_trajectory_record
 from agent.trajectory_quality import SFT_POSITIVE, classify_trajectory
-from agent.types import SOLVE_STATUS_BLOCKED, SOLVE_STATUS_VERIFIED, TaskRequest
+from agent.types import SOLVE_STATUS_BLOCKED, SOLVE_STATUS_FAILED, SOLVE_STATUS_VERIFIED, TaskRequest
 from config import agent_cfg
 from run import collect_backend_dependency_checks
 from tests.helpers.fake_transformers import fake_transformers_module, fake_transformers_sequence
@@ -51,6 +51,51 @@ def fake_chat_transformers_module(output_text: str, seen_prompts):
 
         def decode(self, generated, skip_special_tokens=True):
             return output_text
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def generate(self, **kwargs):
+            return [[1, 2, 3, 4]]
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeTokenizer()
+
+    class AutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return FakeModel()
+
+    return types.SimpleNamespace(
+        __version__="fake",
+        AutoTokenizer=AutoTokenizer,
+        AutoModelForCausalLM=AutoModelForCausalLM,
+    )
+
+
+def fake_chat_transformers_sequence(output_texts, seen_prompts):
+    outputs = list(output_texts)
+    state = {"index": 0}
+
+    class FakeTokenizer:
+        model_max_length = 4096
+        chat_template = "{{ messages }}"
+
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+            seen_prompts.append(messages[0]["content"])
+            return "CHAT:" + messages[0]["content"]
+
+        def __call__(self, prompt, return_tensors=None, **kwargs):
+            return {"input_ids": [[1, 2, 3]]}
+
+        def decode(self, generated, skip_special_tokens=True):
+            index = min(state["index"], len(outputs) - 1)
+            value = outputs[index]
+            state["index"] += 1
+            return value
 
     class FakeModel:
         def eval(self):
@@ -276,6 +321,146 @@ class TransformersBackendMvpTests(unittest.TestCase):
         self.assertEqual(payload["backend_status"]["generation_attempts"], 3)
         self.assertEqual(payload["backend_status"]["malformed_retry_count"], 2)
         self.assertEqual(payload["attempts"], [])
+
+    def test_failed_repair_loop_reports_diagnostics_and_preserves_attempt_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            module_path = os.path.join(td, "demo.py")
+            test_path = os.path.join(td, "test_demo.py")
+            backend_path = os.path.join(td, "repair_fail.json")
+            with open(module_path, "w", encoding="utf-8") as handle:
+                handle.write("def add(a, b):\n    return a - b\n")
+            with open(test_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "import unittest\n"
+                    "from demo import add\n\n"
+                    "class DemoTests(unittest.TestCase):\n"
+                    "    def test_add(self):\n"
+                    "        self.assertEqual(add(2, 3), 5)\n"
+                )
+            bad_edit = {"path": "demo.py", "new_content": "def add(a, b):\n    return a - b\n"}
+            with open(backend_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "initial_candidate": {
+                            "candidate_id": "initial-bad",
+                            "summary": "leave add broken",
+                            "edits": [bad_edit],
+                        },
+                        "repair_candidates": [
+                            {"candidate_id": "repair-1", "summary": "still wrong", "edits": [bad_edit]},
+                            {"candidate_id": "repair-2", "summary": "still wrong", "edits": [bad_edit]},
+                            {"candidate_id": "repair-3", "summary": "still wrong", "edits": [bad_edit]},
+                        ],
+                    },
+                    handle,
+                )
+            with agent_config_overrides(report_dir=os.path.join(td, "agent_reports")):
+                payload = solve_task(
+                    TaskRequest(
+                        task_text="Fix add()",
+                        file_hints=("demo.py",),
+                        checks=("unittest:discover -s . -p test_demo.py -v",),
+                        workspace_root=td,
+                    ),
+                    backend_script_path=backend_path,
+                )
+            with open(module_path, "r", encoding="utf-8") as handle:
+                final_source = handle.read()
+
+        self.assertEqual(payload["status"], SOLVE_STATUS_FAILED)
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertIsNone(payload["candidate"])
+        self.assertIn("return a - b", final_source)
+        diagnostics = payload["failure_diagnostics"]
+        self.assertEqual(diagnostics["final_failure_class"], "assertion_failure")
+        self.assertEqual(diagnostics["verifier_failure_type"], "verifier_assertion_failure")
+        self.assertTrue(diagnostics["repair_budget_exhausted"])
+        self.assertTrue(diagnostics["failure_is_model_or_patch_behavior"])
+        self.assertFalse(diagnostics["infrastructure_failure_detected"])
+        self.assertTrue(diagnostics["all_failed_edits_rolled_back"])
+        self.assertFalse(diagnostics["training_use_allowed"])
+        self.assertTrue(diagnostics["no_winning_candidate"])
+        self.assertTrue(diagnostics["per_attempt_evidence_paths_distinct"])
+        self.assertTrue(diagnostics["repeated_failure_signature_detected"])
+        self.assertIn("same verifier failure signature", diagnostics["repeated_failed_behavior_warning"])
+        self.assertTrue(diagnostics["repair_prompt_includes_verifier_feedback"])
+        self.assertTrue(diagnostics["repair_prompt_includes_failure_class"])
+        self.assertEqual(diagnostics["attempt_count"], 4)
+        self.assertEqual(len(diagnostics["attempts"]), 4)
+        stderr_paths = [item["verifier_stderr_path"] for item in diagnostics["attempts"]]
+        self.assertEqual(len(stderr_paths), len(set(stderr_paths)))
+        self.assertTrue(all("attempts" in path for path in stderr_paths))
+        self.assertTrue(all(not item["kept"] for item in diagnostics["attempts"]))
+        self.assertTrue(all(not item["verifier_passed"] for item in diagnostics["attempts"]))
+        trajectory = build_trajectory_record(payload)
+        quality = classify_trajectory(trajectory)
+        self.assertFalse(quality["eligible"]["sft_positive"])
+        self.assertFalse(quality["eligible"]["preference_winner"])
+
+    def test_repair_prompt_includes_verifier_feedback_without_hidden_answer_leakage(self):
+        secret_private_answer = "SECRET_HIDDEN_EXPECTED_ANSWER"
+        seen_prompts = []
+        bad_candidate = valid_candidate_json(content="def add(a, b):\n    return a - b\n")
+        with tempfile.TemporaryDirectory() as td:
+            module_path = os.path.join(td, "demo.py")
+            test_path = os.path.join(td, "test_demo.py")
+            with open(module_path, "w", encoding="utf-8") as handle:
+                handle.write("def add(a, b):\n    return a - b\n")
+            with open(test_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "import unittest\n"
+                    "from demo import add\n\n"
+                    "class DemoTests(unittest.TestCase):\n"
+                    "    def test_add(self):\n"
+                    "        self.assertEqual(add(2, 3), 5)\n"
+                )
+
+            fake_module = fake_chat_transformers_sequence([bad_candidate, bad_candidate], seen_prompts)
+            with patch.dict(sys.modules, {"transformers": fake_module}):
+                with agent_config_overrides(
+                    backend_kind="local_transformers_in_process",
+                    backend_model_id_or_path="./local-test-model",
+                    backend_prompt_max_chars=12000,
+                    default_retry_budget=1,
+                    report_dir=os.path.join(td, "agent_reports"),
+                ):
+                    payload = solve_task(
+                        TaskRequest(
+                            task_text="Fix add() in demo.py",
+                            file_hints=("demo.py",),
+                            checks=("unittest:discover -s . -p test_demo.py -v",),
+                            workspace_root=td,
+                        )
+                    )
+            with open(module_path, "r", encoding="utf-8") as handle:
+                final_source = handle.read()
+
+        repair_prompts = [prompt for prompt in seen_prompts if "Purpose: repair_candidate" in prompt]
+        self.assertTrue(repair_prompts)
+        repair_prompt = repair_prompts[0]
+        self.assertIn("agent_repair_prompt_feedback_v1", repair_prompt)
+        self.assertIn("failure_class", repair_prompt)
+        self.assertIn("assertion_failure", repair_prompt)
+        self.assertIn("failing_check_summary", repair_prompt)
+        self.assertIn("touched_file_paths", repair_prompt)
+        self.assertIn("previous_candidate", repair_prompt)
+        self.assertIn("Do not repeat failed behavior", repair_prompt)
+        self.assertIn("verifier remains final authority", repair_prompt.lower())
+        self.assertIn("bounded retry budget", repair_prompt.lower())
+        self.assertIn("structured_candidate_contract_v1", repair_prompt)
+        self.assertIn("demo.py", repair_prompt)
+        self.assertNotIn(secret_private_answer, repair_prompt)
+        self.assertEqual(payload["status"], SOLVE_STATUS_FAILED)
+        self.assertEqual(payload["quality_claim"], "none")
+        self.assertIsNone(payload["candidate"])
+        self.assertIn("return a - b", final_source)
+        diagnostics = payload["failure_diagnostics"]
+        self.assertTrue(diagnostics["all_failed_edits_rolled_back"])
+        self.assertFalse(diagnostics["training_use_allowed"])
+        self.assertTrue(diagnostics["repair_prompt_includes_verifier_feedback"])
+        self.assertTrue(diagnostics["repair_prompt_includes_failure_class"])
+        self.assertTrue(diagnostics["repeated_failure_signature_detected"])
+        self.assertIn("same verifier failure signature", diagnostics["repeated_failed_behavior_warning"])
 
     def test_unsafe_backend_edit_path_is_rejected_before_candidate_use(self):
         with tempfile.TemporaryDirectory() as td:

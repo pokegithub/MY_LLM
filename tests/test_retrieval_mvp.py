@@ -192,9 +192,16 @@ class RetrievalMvpTests(unittest.TestCase):
         }
         contradiction_validation = validate_cited_answer(contradicted, index)
         self.assertFalse(contradiction_validation["valid"])
+        self.assertNotEqual(contradicted["answer_status"], "answered_with_citations")
+        self.assertEqual(contradicted["answer_status"], "abstained_due_to_contradiction")
         self.assertTrue(contradiction_validation["contradiction_detected"])
         self.assertGreater(contradiction_validation["claims_contradicted"], 0)
         self.assertIn("contradicted_claims_present", contradiction_validation["failure_reasons"])
+        self.assertEqual(contradiction_validation["answer_support_quality"], "contradicted")
+        self.assertFalse(contradiction_validation["retrieval_supported"])
+        self.assertTrue(contradiction_validation["citation_validation"]["valid"])
+        self.assertEqual(contradiction_validation["quality_claim"], "none")
+        self.assertNotIn("private", json.dumps(contradiction_validation).lower())
 
         partial = dict(contradicted)
         partial["answer_status"] = "partial_answer_with_caveats"

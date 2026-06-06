@@ -16,18 +16,24 @@
 - Date: 2026-06-05
 - Scope: Documentation synchronization after the Phase A backend, hidden-eval seed runner, local retrieval/citation MVP, cited answer surface, claim-level lexical support verifier, source-scoped compile helper, low-risk cleanup passes, user-facing `repo-assist` command, manual `repo-assist-eval` query pack, and Lightning AI free-credit cloud-prep guardrails. This sync reconciles tracked-source module inventory, `run.py` command surface, artifact roles, and truth caveats. It does not claim Phase B, model quality, training readiness, paid cloud readiness, or SFT-positive eligibility.
 - Module count: 103 tracked/source-intended Python files, including tests and hidden fixture modules; `.venv`, caches, checkpoints, downloaded models, and run artifacts are excluded.
-- Command count: 50 `run.py` commands from the current argparse command choices.
+- Command count: 51 `run.py` commands from the current argparse command choices.
 - Recent maintenance reflected:
   - `retrieval-answer` exists and uses local lexical repo-doc retrieval only.
   - `repo-assist` exists as a user-facing local repo-doc assistant that reuses `retrieval-answer`, citation validation, and claim-support verification. It also has narrow deterministic direct-answer templates for repo-status, command, and truth-limit questions. It does not use web retrieval, vector search, semantic memory, model/backend generation, or code editing.
   - `repo-assist-eval` runs the manual local query pack at `evals/repo_assist/repo_assist_manual_queries_v1.json`; it checks cited answers, direct-template expectations, and abstentions without using web or model backends.
+  - `repo-assist` and `repo-assist-eval` auto-build the deterministic local repo-doc retrieval index if the configured index path is missing; this is local-only and does not broaden retrieval scope.
   - claim-level lexical support verification exists for cited answers and hidden retrieval/source eval reports.
+  - contradicted cited answers are downgraded to `abstained_due_to_contradiction`; citations may remain visible as evidence, but contradicted answers are not normal supported answers and do not pass answer verification.
   - `compile-source` exists as a tracked-source-only compile helper and is not a replacement for full `python -m compileall -q .`.
   - `evals/hidden/hidden_eval_seed_set_v1.jsonl` is now trackable despite the global `*.jsonl` ignore rule; hidden private targets remain separate.
   - duplicated test-only fake Transformers scaffolding was moved into `tests/helpers/fake_transformers.py`.
   - Qwen2.5-Coder 0.5B and 1.5B small-model smoke evidence exists, but both passed `0` backend-routed hidden coding verifier items.
   - `model_selection/local_small_model_stop_go_memo_v1.md` records the local RTX 2050 stop/go decision: stop local small-model escalation for now and focus on retrieval/citation truthfulness.
   - `cloud/lightning_ai/` prepares a dry-run-first Lightning AI free-credit cloud readiness path with manual login, 15-credit budget guardrails, no credential storage, and no automatic paid job start.
+  - `reports/cloud_qwen2_5_coder_7b_evidence_v1.md` records synced Lightning AI evidence for Qwen2.5-Coder-7B: readiness/backend smoke passed, hidden-eval seed run was 15/17, remaining failures are documented, model quality is not proven, training is not ready, Phase B has not started, and SFT-positive remains 0.
+  - `reports/repair_loop_diagnostics_v1.md` documents the repair-loop diagnostics improvement: failed repair attempts now report clearer verifier-failure evidence while keeping verifier authority, rollback behavior, hidden-eval privacy, and training exclusion intact.
+  - `reports/repair_loop_prompt_critique_v1.md` documents the repair-loop prompt/critique improvement: repair attempts receive clearer verifier feedback and retry-budget reminders while preserving verifier authority, rollback behavior, hidden-eval privacy, and training exclusion.
+  - `hidden-eval-rerun-failed` reruns selected non-passed hidden-eval seeds from a previous public summary and writes a public-safe delta report; it does not expose hidden answers, train, start Phase B, or make model-quality claims.
 - Phase status: Phase A remains active. Phase B has not started. No training, SFT, DPO, RLVR, model-weight improvement, full 7B/14B bakeoff, legal-clearance claim, or SFT-positive trajectory dataset exists.
 - Runtime verification:
   - Default production-profile parameter cardinality is unverified in this pass.
@@ -293,6 +299,45 @@
 - Execute mode requires explicit `--execute`, `MYLLM_CLOUD_CONFIRM_EXECUTE=YES`, `MYLLM_CLOUD_MAX_CREDITS=15`, manual auth confirmation, and verified or manually confirmed free-credit/price evidence. Dry-run/check/plan modes may report missing auth or unknown credits without starting work.
 - This cloud prep does not start Phase B, training, SFT, DPO, RLVR, production serving, or the full 7B/14B bakeoff. It is a guardrail layer for future manually approved cloud smoke only.
 
+### Phase A cloud Qwen2.5-Coder-7B evidence update
+
+- Date: 2026-06-05
+- Scope: Ingested synced Lightning AI RTX 6000 evidence for `Qwen/Qwen2.5-Coder-7B-Instruct` without running cloud locally, committing model files, starting Phase B, or training.
+- Evidence report: `reports/cloud_qwen2_5_coder_7b_evidence_v1.md` with JSON companion `reports/cloud_qwen2_5_coder_7b_evidence_v1.json`.
+- Cloud-local model path used by the stopped Lightning session: `run_artifacts/local_models/candidates/open-dense-7b`; these model files are not tracked source.
+- Config path: `configs/backend_cloud_qwen2_5_coder_7b.json`.
+- Recorded result: candidate-readiness smoke passed, agent-backend-smoke passed, and hidden-eval seed run using the 7B config passed 15/17 attempted items with private leakage false and `quality_claim: none`.
+- Remaining failures: `hidden_code_repair_001` failed the coding repair verifier, and `hidden_retrieval_002` exposed a contradicted retrieval answer status issue that is tightened locally by downgrading contradicted answers away from normal `answered_with_citations` support.
+- This evidence does not prove model quality, does not create SFT-positive data, does not make training ready, and does not start Phase B.
+- No training, SFT, DPO, RLVR, model-weight improvement has happened; training is not ready.
+
+### Phase A repair-loop diagnostics update
+
+- Date: 2026-06-05
+- Scope: Improved failed coding-agent repair-loop diagnostics without changing verifier authority, backend behavior, hidden targets, training eligibility, or Phase status.
+- Failed or attempted coding solve reports may include `failure_diagnostics` with final failure class, verifier failure type, attempt count, repair budget exhaustion, per-attempt verifier evidence references, failure signatures, rollback status, and `training_use_allowed: false`.
+- Coding solve verifier outputs are scoped under per-attempt directories, preserving failed-attempt stdout/stderr evidence instead of reusing a single check path for repeated attempts.
+- Hidden-eval coding item summaries expose only safe scalar diagnostics such as `failure_category`, `repair_budget_exhausted`, `training_use_allowed: false`, and privacy flags. Hidden/private target answers remain excluded from public summaries and training data.
+- This update does not turn verifier failures into successes, does not create SFT-positive trajectories, does not recommend training, does not prove model quality, and does not start Phase B.
+
+### Phase A repair-loop prompt critique update
+
+- Date: 2026-06-06
+- Scope: Improved the critique text passed into repair candidate generation without changing verifier authority, schema validation, rollback behavior, hidden-eval privacy, trajectory-quality rules, training readiness, or Phase status.
+- Repair critiques now include a structured `agent_repair_prompt_feedback_v1` block with failure class, failing check summary, touched file paths, previous candidate summary, bounded retry-budget reminder, verifier-authority reminder, and a clear instruction not to repeat failed behavior.
+- Failure diagnostics may expose safe scalar fields such as `repeated_failure_signature_detected`, `repeated_failed_behavior_warning`, `repair_prompt_includes_verifier_feedback`, and `repair_prompt_includes_failure_class`.
+- Hidden-eval public summaries keep these as safe booleans only. They do not expose hidden expected answers, private targets, repair prompt text, or training-positive traces.
+- This update does not train, does not run cloud, does not download 14B, does not prove model quality, does not make failed traces SFT-positive, and does not start Phase B.
+
+### Phase A targeted hidden-eval rerun update
+
+- Date: 2026-06-05
+- Scope: Added `hidden-eval-rerun-failed` as a local debugging workflow for rerunning non-passed or explicitly selected hidden-eval seed IDs without rerunning the full seed set.
+- The command accepts `--previous-summary <summary.json>` and reuses existing `--hidden-eval-seed-id` and `--hidden-eval-backend-config` support. Explicit seed IDs override automatic non-passed selection.
+- Delta reports use schema `hidden_eval_targeted_rerun_delta_v1` and include previous/new statuses, verifier statuses, route/category fields, improvement/regression/unchanged counts, and safe failure categories.
+- The workflow compares only public hidden-eval summary fields and delegates execution to the existing hidden-eval runner. Hidden private targets and expected answers remain excluded from public summaries.
+- This workflow does not train, does not create SFT-positive data, does not run cloud, does not download 14B, does not start Phase B, and does not prove model quality.
+
 ### Phase A retrieval claim-support verifier update
 
 - Date: 2026-05-26
@@ -421,6 +466,7 @@ Command source: current `run.py` argparse choices on 2026-06-05. Total commands:
 - `agent-backend-provision-small-candidate`
 - `candidate-readiness-smoke`
 - `hidden-eval-seed-run`
+- `hidden-eval-rerun-failed`
 - `retrieval-index-build`
 - `retrieval-search`
 - `retrieval-citation-check`
@@ -503,6 +549,7 @@ Command source: current `run.py` argparse choices on 2026-06-05. Total commands:
 - `agent-backend-provision-small-candidate`: autonomously provisions an allowlisted small instruction-following backend smoke candidate without claiming model quality
 - `candidate-readiness-smoke`: checks one shortlisted candidate slot for local availability and pre-bakeoff structured-output readiness without selecting a winner
 - `hidden-eval-seed-run`: runs the narrow private hidden-eval seed subset with private target leakage controls; it is not a full bakeoff
+- `hidden-eval-rerun-failed`: reruns non-passed or explicitly selected hidden-eval seed IDs from a previous public summary and writes a public-safe delta report
 - `retrieval-index-build`: builds the local lexical repo-doc retrieval index over approved docs/manifests only
 - `retrieval-search`: returns deterministic lexical matches and checkable citation objects; it does not generate answers
 - `retrieval-citation-check`: validates citation presence, source policy, locator resolution, and snippet/hash support
@@ -1249,6 +1296,7 @@ Execution uses constrained subprocess mode (`python -I -S`) with timeout.
 - `backend_integration/`: tracked policy/spec artifacts for backend integration, structured candidate output, failure contracts, and output normalization.
 - `retrieval_design/`: tracked design/policy/spec artifacts for source policy, citation contract, abstention, and retrieval verifier expectations.
 - `model_selection/`: tracked candidate/bakeoff/readiness artifacts plus the local small-model stop/go memo.
+- `reports/cloud_qwen2_5_coder_7b_evidence_v1.md`: tracked synced cloud-evidence report for the stopped Lightning AI Qwen2.5-Coder-7B smoke/hidden-eval run. It records evidence only; it is not a model-quality, training-readiness, SFT-positive, or Phase B claim.
 - `configs/backend_smoke_*.json` and `configs/backend_candidate_smoke_*.json`: tracked local-only backend smoke configs and examples. They are not proof that corresponding models are present or useful.
 - `evals/hidden/hidden_eval_seed_set_v1.jsonl`: tracked public seed metadata for hidden eval. It is explicitly unignored despite the global `*.jsonl` rule.
 - `evals/hidden/private/hidden_eval_private_targets_v1.json`: tracked private target/behavior assertions for local hidden-eval execution. It must not be copied into training positives or public summaries.

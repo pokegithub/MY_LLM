@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import time
 import uuid
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from agent.backend import BackendCandidateError, CodingModelBackend, load_backend
 from agent.critic import critique_failure
@@ -111,6 +113,16 @@ def _finalize(
     payload = to_dict(result)
     payload["schema"] = "agent_phase2_report_v1"
     payload["timestamp"] = int(time.time())
+    if attempts or status != SOLVE_STATUS_VERIFIED:
+        payload["failure_diagnostics"] = _build_failure_diagnostics(
+            status=status,
+            request=request,
+            run_dir=run_dir,
+            backend_status=backend_status,
+            retry_budget=retry_budget,
+            attempts=tuple(attempts),
+            winning_attempt=winning_attempt,
+        )
     report_path = _write_report(run_dir, payload)
     payload["report_path"] = report_path
     registry_status = {
@@ -182,6 +194,281 @@ def _empty_attempt_history() -> tuple[AttemptRecord, ...]:
     return ()
 
 
+def _first_failed_check(verification: VerificationReport):
+    for check in verification.checks:
+        if not check.passed:
+            return check
+    return verification.checks[0] if verification.checks else None
+
+
+def _short_text(text: str, *, limit: int = 320) -> str:
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(compact) > limit:
+        return compact[: limit - 3].rstrip() + "..."
+    return compact
+
+
+def _stable_failure_signature(*, failure_class: str, check_type: str, spec: str, summary: str) -> str:
+    normalized = "|".join(
+        [
+            str(failure_class or "unknown"),
+            str(check_type or "unknown"),
+            str(spec or ""),
+            _short_text(summary, limit=240).lower(),
+        ]
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _attempt_failure_diagnostic(attempt: AttemptRecord) -> Dict[str, Any]:
+    verification = attempt.verification
+    failed_check = _first_failed_check(verification)
+    failure_class = (
+        attempt.critique.failure_class
+        if attempt.critique is not None
+        else ("none" if verification.overall_passed else "unverified_failure")
+    )
+    check_type = failed_check.check_type if failed_check else "none"
+    check_spec = failed_check.spec if failed_check else ""
+    check_summary = failed_check.summary if failed_check else verification.summary
+    return {
+        "attempt_index": attempt.attempt_index,
+        "candidate_id": attempt.candidate_id,
+        "origin": attempt.origin,
+        "phase": attempt.phase,
+        "files_touched": list(attempt.files_touched),
+        "kept": bool(attempt.kept),
+        "verifier_passed": bool(verification.overall_passed),
+        "failure_class": failure_class,
+        "verifier_command": failed_check.evidence.get("command") if failed_check and failed_check.evidence else None,
+        "verifier_stdout_path": failed_check.stdout_path if failed_check else None,
+        "verifier_stderr_path": failed_check.stderr_path if failed_check else None,
+        "short_assertion_summary": _short_text(check_summary),
+        "stable_failure_signature": _stable_failure_signature(
+            failure_class=failure_class,
+            check_type=check_type,
+            spec=check_spec,
+            summary=check_summary,
+        ),
+    }
+
+
+def _failure_signature_repeated(failed_attempts: Sequence[Dict[str, Any]]) -> bool:
+    signatures = [str(item.get("stable_failure_signature") or "") for item in failed_attempts]
+    signatures = [item for item in signatures if item]
+    return bool(signatures) and len(signatures) != len(set(signatures))
+
+
+def _unique_text(items: Sequence[str]) -> List[str]:
+    result: List[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
+def _candidate_edit_paths(candidate: Candidate) -> List[str]:
+    return _unique_text([edit.path for edit in candidate.edits])
+
+
+def _repair_feedback_context(
+    *,
+    critique: Critique,
+    previous_candidate: Candidate,
+    attempt_history: Sequence[AttemptRecord],
+    plan_retry_budget: int,
+) -> Dict[str, Any]:
+    last_attempt = attempt_history[-1] if attempt_history else None
+    failed_check = _first_failed_check(last_attempt.verification) if last_attempt is not None else None
+    failed_summary = (
+        failed_check.summary
+        if failed_check is not None
+        else (last_attempt.verification.summary if last_attempt is not None else critique.evidence_summary)
+    )
+    touched_files = _unique_text(
+        list(last_attempt.files_touched if last_attempt is not None else ())
+        + _candidate_edit_paths(previous_candidate)
+        + list(critique.repair_targets)
+    )
+    failed_diagnostics = [
+        _attempt_failure_diagnostic(attempt)
+        for attempt in attempt_history
+        if not attempt.verification.overall_passed
+    ]
+    repeated_signature = _failure_signature_repeated(failed_diagnostics)
+    return {
+        "schema": "agent_repair_prompt_feedback_v1",
+        "failure_class": critique.failure_class,
+        "failing_check_summary": _short_text(failed_summary),
+        "failure_root_cause": _short_text(critique.root_cause),
+        "touched_file_paths": touched_files,
+        "previous_candidate": {
+            "candidate_id": previous_candidate.candidate_id,
+            "summary": _short_text(previous_candidate.summary),
+            "edit_paths": _candidate_edit_paths(previous_candidate),
+        },
+        "attempts_already_failed": len(failed_diagnostics),
+        "retry_budget": max(0, int(plan_retry_budget)),
+        "repeated_failure_signature_detected": repeated_signature,
+        "repair_instructions": [
+            "Use the verifier feedback above as the repair target.",
+            "Do not repeat failed behavior from the previous candidate.",
+            "The verifier remains final authority; do not claim success in the candidate summary.",
+            "Respect the bounded retry budget and make the smallest relevant full-file replacement.",
+            "Preserve structured_candidate_contract_v1: return exactly one JSON object with candidate_id, summary, and edits.",
+        ],
+        "repeated_failed_behavior_warning": (
+            "A previous verifier failure signature repeated; change the actual failing behavior instead of restating the same edit."
+            if repeated_signature
+            else None
+        ),
+    }
+
+
+def _critique_with_repair_feedback(
+    *,
+    critique: Critique,
+    previous_candidate: Candidate,
+    attempt_history: Sequence[AttemptRecord],
+    plan_retry_budget: int,
+) -> Critique:
+    feedback = _repair_feedback_context(
+        critique=critique,
+        previous_candidate=previous_candidate,
+        attempt_history=attempt_history,
+        plan_retry_budget=plan_retry_budget,
+    )
+    feedback_text = json.dumps(feedback, indent=2, sort_keys=True)
+    repair_targets = tuple(_unique_text(list(critique.repair_targets) + feedback["touched_file_paths"]))
+    return Critique(
+        failure_class=critique.failure_class,
+        root_cause=(
+            f"{critique.root_cause}; repair prompt includes verifier feedback, "
+            f"failure class, previous candidate summary, and retry-budget reminders"
+        ),
+        repair_targets=repair_targets,
+        blocked_reason=critique.blocked_reason,
+        confidence=critique.confidence,
+        evidence_summary=f"{critique.evidence_summary}\n\nREPAIR_LOOP_FEEDBACK_V1:\n{feedback_text}",
+    )
+
+
+def _diagnostic_failure_class(attempts: Sequence[AttemptRecord], backend_status: Dict, status: str) -> str:
+    failed_attempts = [attempt for attempt in attempts if not attempt.verification.overall_passed]
+    if failed_attempts:
+        last = failed_attempts[-1]
+        if last.critique is not None:
+            return str(last.critique.failure_class)
+        return "verifier_failure"
+    if backend_status.get("last_failure_class"):
+        return str(backend_status.get("last_failure_class"))
+    if backend_status.get("failure_class"):
+        return str(backend_status.get("failure_class"))
+    if status == SOLVE_STATUS_BLOCKED:
+        return "blocked_before_verifier"
+    if status == SOLVE_STATUS_FAILED:
+        return "verification_failed"
+    return "none"
+
+
+def _verifier_failure_type(final_failure_class: str) -> str:
+    mapping = {
+        "assertion_failure": "verifier_assertion_failure",
+        "behavior_mismatch": "verifier_behavior_failure",
+        "syntax_error": "verifier_syntax_failure",
+        "import_error": "verifier_import_failure",
+        "runtime_error": "verifier_runtime_failure",
+        "timeout": "verifier_timeout",
+        "performance_regression": "verifier_performance_failure",
+        "verifier_missing": "verifier_missing",
+        "unsupported_assumption": "unsupported_verifier_contract",
+    }
+    if final_failure_class in mapping:
+        return mapping[final_failure_class]
+    if final_failure_class in {"backend_unavailable", "model_load_failed", "malformed_candidate_output", "schema_validation_failed"}:
+        return "backend_or_candidate_generation_failure"
+    if final_failure_class == "none":
+        return "none"
+    return "verifier_failure"
+
+
+def _infrastructure_failure_detected(final_failure_class: str, backend_status: Dict) -> bool:
+    infrastructure_classes = {
+        "backend_unavailable",
+        "model_load_failed",
+        "malformed_candidate_output",
+        "schema_validation_failed",
+        "verifier_missing",
+        "unsupported_assumption",
+    }
+    return final_failure_class in infrastructure_classes or bool(backend_status.get("failure_class"))
+
+
+def _build_failure_diagnostics(
+    *,
+    status: str,
+    request: TaskRequest,
+    run_dir: str,
+    backend_status: Dict,
+    retry_budget: int,
+    attempts: Sequence[AttemptRecord],
+    winning_attempt: Optional[int],
+) -> Dict[str, Any]:
+    attempt_diagnostics = [_attempt_failure_diagnostic(attempt) for attempt in attempts]
+    failed_attempts = [item for item in attempt_diagnostics if not item["verifier_passed"]]
+    final_failure_class = _diagnostic_failure_class(attempts, backend_status, status)
+    check_names = [
+        str((attempt.verification.checks[0].check_type if attempt.verification.checks else "none"))
+        for attempt in attempts
+        if not attempt.verification.overall_passed
+    ]
+    evidence_paths: List[str] = []
+    for item in attempt_diagnostics:
+        for key in ("verifier_stdout_path", "verifier_stderr_path"):
+            value = item.get(key)
+            if value:
+                evidence_paths.append(str(value))
+    distinct_paths = bool(evidence_paths) and len(evidence_paths) == len(set(evidence_paths))
+    last_failed = failed_attempts[-1] if failed_attempts else None
+    repeated_failure_signature = _failure_signature_repeated(failed_attempts)
+    repair_prompt_expected = bool(failed_attempts) and len(attempts) > 1
+    hidden_or_fixture_workspace = any(
+        marker in str(value).lower()
+        for value in (request.workspace_root, run_dir)
+        for marker in ("hidden_eval", "evals/hidden", "fixture")
+    )
+    return {
+        "schema": "agent_repair_failure_diagnostics_v1",
+        "final_failure_class": final_failure_class,
+        "attempt_count": len(attempts),
+        "repair_budget": retry_budget,
+        "repair_budget_exhausted": bool(status == SOLVE_STATUS_FAILED and len(attempts) >= retry_budget + 1),
+        "verifier_failure_type": _verifier_failure_type(final_failure_class),
+        "all_attempts_failed_same_check": bool(check_names) and len(set(check_names)) == 1,
+        "distinct_failure_signatures": sorted({str(item["stable_failure_signature"]) for item in failed_attempts}),
+        "last_verifier_summary": last_failed.get("short_assertion_summary") if last_failed else None,
+        "failure_is_model_or_patch_behavior": bool(failed_attempts) and not _infrastructure_failure_detected(final_failure_class, backend_status),
+        "infrastructure_failure_detected": _infrastructure_failure_detected(final_failure_class, backend_status),
+        "hidden_or_fixture_workspace_detected": hidden_or_fixture_workspace,
+        "training_use_allowed": False,
+        "no_winning_candidate": winning_attempt is None,
+        "all_failed_edits_rolled_back": bool(failed_attempts) and all(not item["kept"] for item in failed_attempts),
+        "per_attempt_evidence_paths_distinct": distinct_paths,
+        "diagnostic_limitation": None if distinct_paths or not evidence_paths else "verifier evidence path reused",
+        "repeated_failure_signature_detected": repeated_failure_signature,
+        "repeated_failed_behavior_warning": (
+            "same verifier failure signature repeated across repair attempts"
+            if repeated_failure_signature
+            else None
+        ),
+        "repair_prompt_includes_verifier_feedback": repair_prompt_expected,
+        "repair_prompt_includes_failure_class": repair_prompt_expected and final_failure_class != "none",
+        "attempts": attempt_diagnostics,
+        "quality_claim": "none" if status != SOLVE_STATUS_VERIFIED else "verification_passed",
+    }
+
+
 def _backend_status_with_failure(backend_status: Dict, exc: BackendCandidateError) -> Dict:
     updated = dict(backend_status)
     updated["last_failure_class"] = exc.failure_class
@@ -238,14 +525,20 @@ def _run_coding_attempt(
     context: ContextBundle,
     plan,
     run_dir: str,
+    attempt_index: Optional[int] = None,
+    phase: Optional[str] = None,
     candidate: Candidate,
 ) -> tuple[List[str], VerificationReport, bool]:
     session = WorkspaceEditSession(context.workspace_root)
     touched = session.apply_candidate(candidate)
+    verifier_run_dir = run_dir
+    if attempt_index is not None:
+        safe_phase = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(phase or "attempt")).strip("_") or "attempt"
+        verifier_run_dir = os.path.join(run_dir, "attempts", f"{attempt_index:02d}_{safe_phase}")
     verification = run_verification(
         workspace_root=context.workspace_root,
         checks=list(plan.checks),
-        run_dir=run_dir,
+        run_dir=verifier_run_dir,
     )
     if verification.overall_passed:
         session.commit()
@@ -631,6 +924,8 @@ def solve_task(
             context=context,
             plan=plan,
             run_dir=run_dir,
+            attempt_index=repair_index + 1,
+            phase=phase,
             candidate=current_candidate,
         )
         files_touched = list(touched)
@@ -680,13 +975,19 @@ def solve_task(
             status = SOLVE_STATUS_FAILED
             break
 
+        repair_critique = _critique_with_repair_feedback(
+            critique=critique,
+            previous_candidate=current_candidate,
+            attempt_history=tuple(attempts),
+            plan_retry_budget=retry_budget,
+        )
         try:
             next_candidate = _generate_repair_candidate(
                 backend=backend,
                 request=request,
                 context=context,
                 plan=plan,
-                critique=critique,
+                critique=repair_critique,
                 previous_candidate=current_candidate,
                 attempt_history=tuple(attempts),
             )

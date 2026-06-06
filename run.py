@@ -175,6 +175,7 @@ def check_dependencies(command: str):
         "agent-backend-provision-small-candidate": {},
         "candidate-readiness-smoke": {},
         "hidden-eval-seed-run": {},
+        "hidden-eval-rerun-failed": {},
         "retrieval-index-build": {},
         "retrieval-search": {},
         "retrieval-citation-check": {},
@@ -842,6 +843,77 @@ def run_hidden_eval_seed_run(args):
     print("=" * 60)
 
 
+def run_hidden_eval_rerun_failed(args):
+    from eval_harness.hidden_seed_runner import run_hidden_eval_failed_seed_rerun
+
+    if not args.previous_summary:
+        failure = {
+            "schema": "hidden_eval_targeted_rerun_delta_v1",
+            "status": "blocked",
+            "failure_reason": "hidden-eval-rerun-failed requires --previous-summary",
+            "quality_claim": "none",
+            "training_executed": False,
+            "phase_b_started": False,
+        }
+        if OUTPUT_JSON:
+            _emit_json(failure)
+        else:
+            print("ERROR: hidden-eval-rerun-failed requires --previous-summary")
+        sys.exit(1)
+    try:
+        payload = run_hidden_eval_failed_seed_rerun(
+            previous_summary_path=args.previous_summary,
+            seed_ids=tuple(args.hidden_eval_seed_id or ()) or None,
+            workspace_root=".",
+            backend_config_path=args.hidden_eval_backend_config,
+            backend_script_path=args.backend_script,
+            delta_report_path=REPORT_PATH,
+        )
+    except ValueError as exc:
+        failure = {
+            "schema": "hidden_eval_targeted_rerun_delta_v1",
+            "status": "blocked",
+            "previous_summary_path": os.path.abspath(args.previous_summary),
+            "failure_reason": str(exc),
+            "quality_claim": "none",
+            "training_executed": False,
+            "phase_b_started": False,
+            "private_leakage": False,
+        }
+        if OUTPUT_JSON:
+            _emit_json(failure)
+        else:
+            print(f"ERROR: {exc}")
+        sys.exit(1)
+    if OUTPUT_JSON:
+        _emit_json(payload)
+        return
+
+    print("\n" + "=" * 60)
+    print("HIDDEN EVAL TARGETED RERUN DELTA")
+    print("=" * 60)
+    print(f"  previous_run_id     : {payload.get('previous_run_id')}")
+    print(f"  new_run_id          : {payload.get('new_run_id')}")
+    print(f"  seeds_rerun         : {', '.join(payload.get('seed_ids_rerun') or [])}")
+    print(f"  improved            : {payload.get('improved_count')}")
+    print(f"  regressed           : {payload.get('regressed_count')}")
+    print(f"  unchanged           : {payload.get('unchanged_count')}")
+    print(f"  previous_passed     : {payload.get('previous_passed_count')}")
+    print(f"  new_passed_subset   : {payload.get('new_passed_count_for_rerun_subset')}")
+    print(f"  private_leakage     : {str(payload.get('private_leakage')).lower()}")
+    print(f"  training_executed   : {str(payload.get('training_executed')).lower()}")
+    print(f"  phase_b_started     : {str(payload.get('phase_b_started')).lower()}")
+    print(f"  quality_claim       : {payload.get('quality_claim')}")
+    print(f"  delta_report_path   : {payload.get('delta_report_path')}")
+    for item in payload.get("items", []):
+        print(
+            "  item                : "
+            f"{item.get('item_id')} {item.get('previous_status')} -> {item.get('new_status')} "
+            f"({item.get('status_delta')})"
+        )
+    print("=" * 60)
+
+
 def run_retrieval_index_build(args):
     from retrieval.local_repo import build_local_repo_docs_index
 
@@ -1103,7 +1175,8 @@ def _repo_assist_find_evidence_chunk(index: dict, evidence_phrases):
 def _repo_assist_apply_direct_template(query: str, answer_payload: dict, index: dict):
     from retrieval.local_repo import make_citation, validate_cited_answer
 
-    if answer_payload.get("answer_status") != "answered_with_citations":
+    base_status = answer_payload.get("answer_status")
+    if base_status not in {"answered_with_citations", "abstained_due_to_contradiction"}:
         return answer_payload, {
             "direct_answer_template_applied": False,
             "direct_answer_intent": None,
@@ -1132,8 +1205,11 @@ def _repo_assist_apply_direct_template(query: str, answer_payload: dict, index: 
     citation = make_citation(chunk, 1)
     candidate = dict(answer_payload)
     candidate.update({
+        "answer_status": "answered_with_citations",
         "answer_text": f"{spec['answer']} [{citation['citation_id']}]",
         "citations": [citation],
+        "abstention_reason": None,
+        "retrieval_supported": True,
         "answer_assembly": "repo_assist_direct_template_v1",
         "direct_answer_template_applied": True,
         "direct_answer_intent": spec["intent"],
@@ -1158,10 +1234,26 @@ def _repo_assist_apply_direct_template(query: str, answer_payload: dict, index: 
     }, None
 
 
-def _repo_assist_payload(args):
-    from retrieval.local_repo import assemble_cited_answer, load_index, validate_cited_answer
+def _repo_assist_load_or_build_index(index_path: str) -> tuple:
+    from retrieval.local_repo import build_local_repo_docs_index, load_index
 
-    index = load_index(args.retrieval_index_path, workspace_root=".")
+    retrieval_index_missing = not os.path.exists(index_path)
+    retrieval_index_built = False
+    if retrieval_index_missing:
+        build_local_repo_docs_index(workspace_root=".", output_path=index_path)
+        retrieval_index_built = True
+    index = load_index(index_path, workspace_root=".")
+    return index, {
+        "retrieval_index_path": os.path.abspath(index_path),
+        "retrieval_index_missing": retrieval_index_missing,
+        "retrieval_index_built": retrieval_index_built,
+    }
+
+
+def _repo_assist_payload(args):
+    from retrieval.local_repo import assemble_cited_answer, validate_cited_answer
+
+    index, index_metadata = _repo_assist_load_or_build_index(args.retrieval_index_path)
     answer_payload = assemble_cited_answer(
         args.query,
         index=index,
@@ -1214,6 +1306,7 @@ def _repo_assist_payload(args):
         "model_quality_proven": False,
         "answer_verification": validation,
         "retrieval_answer_schema": answer_payload.get("schema"),
+        **index_metadata,
     }
 
 
@@ -1221,6 +1314,7 @@ def _repo_assist_status_family(status: str) -> str:
     if status in {"answered_with_citations", "partial_answer_with_caveats"}:
         return "answered"
     if status in {
+        "abstained_due_to_contradiction",
         "abstained_no_evidence",
         "abstained_out_of_scope",
         "blocked_source_policy",
@@ -1256,9 +1350,12 @@ def run_repo_assist_eval(args):
         "direct_template_expected": 0,
         "direct_template_applied": 0,
         "claims_unsupported_total": 0,
+        "retrieval_index_build_count": 0,
     }
     all_uses_web = False
     all_uses_model_backend = False
+    retrieval_index_missing = False
+    retrieval_index_built = False
     for item in pack["queries"]:
         query_args = argparse.Namespace(
             query=item.get("query"),
@@ -1297,7 +1394,11 @@ def run_repo_assist_eval(args):
 
         all_uses_web = all_uses_web or bool(payload.get("uses_web"))
         all_uses_model_backend = all_uses_model_backend or bool(payload.get("uses_model_backend"))
+        retrieval_index_missing = retrieval_index_missing or bool(payload.get("retrieval_index_missing"))
+        retrieval_index_built = retrieval_index_built or bool(payload.get("retrieval_index_built"))
         counts["query_count"] += 1
+        if payload.get("retrieval_index_built"):
+            counts["retrieval_index_build_count"] += 1
         if expected_family == "answered":
             counts["expected_answered"] += 1
         if expected_family == "unsupported":
@@ -1331,6 +1432,8 @@ def run_repo_assist_eval(args):
             "uses_web": payload.get("uses_web"),
             "uses_model_backend": payload.get("uses_model_backend"),
             "quality_claim": payload.get("quality_claim"),
+            "retrieval_index_missing": payload.get("retrieval_index_missing"),
+            "retrieval_index_built": payload.get("retrieval_index_built"),
             "failures": failures,
         })
 
@@ -1349,6 +1452,9 @@ def run_repo_assist_eval(args):
         "model_quality_proven": False,
         "quality_claim": "none",
         "sft_positive_claim": "not_changed_by_repo_assist_eval",
+        "retrieval_index_path": os.path.abspath(args.retrieval_index_path),
+        "retrieval_index_missing": retrieval_index_missing,
+        "retrieval_index_built": retrieval_index_built,
     }
     report_path = REPORT_PATH or os.path.join(
         ".",
@@ -1372,6 +1478,8 @@ def run_repo_assist_eval(args):
     print(f"  unsupported_abstain: {counts['unsupported_queries_abstained']}")
     print(f"  direct_templates : {counts['direct_template_applied']}/{counts['direct_template_expected']}")
     print(f"  claims_unsupported_total: {counts['claims_unsupported_total']}")
+    print(f"  retrieval_index_missing: {str(retrieval_index_missing).lower()}")
+    print(f"  retrieval_index_built: {str(retrieval_index_built).lower()}")
     print(f"  uses_web         : {str(all_uses_web).lower()}")
     print(f"  uses_model_backend: {str(all_uses_model_backend).lower()}")
     print(f"  quality_claim    : {report['quality_claim']}")
@@ -2582,6 +2690,7 @@ Commands:
   agent-backend-provision-small-candidate Provision a small instruction smoke candidate
   candidate-readiness-smoke Check one shortlisted model slot before bakeoff entry
   hidden-eval-seed-run Run a narrow private hidden-eval seed subset
+  hidden-eval-rerun-failed Rerun non-passed hidden-eval seeds from a previous summary
   retrieval-index-build Build the local repo-doc retrieval index
   retrieval-search Search the local repo-doc retrieval index
   retrieval-citation-check Validate citations from a local retrieval search
@@ -2635,6 +2744,7 @@ Commands:
             "agent-backend-provision-small-candidate",
             "candidate-readiness-smoke",
             "hidden-eval-seed-run",
+            "hidden-eval-rerun-failed",
             "retrieval-index-build",
             "retrieval-search",
             "retrieval-citation-check",
@@ -2758,7 +2868,12 @@ Commands:
     parser.add_argument(
         "--hidden-eval-backend-config",
         default="./configs/backend_smoke_qwen2_5_coder_0_5b.json",
-        help="Backend config used for coding items in hidden-eval-seed-run.",
+        help="Backend config used for coding items in hidden-eval-seed-run and hidden-eval-rerun-failed.",
+    )
+    parser.add_argument(
+        "--previous-summary",
+        default=None,
+        help="Previous hidden-eval summary.json path for hidden-eval-rerun-failed.",
     )
     parser.add_argument(
         "--run-id",
@@ -2839,6 +2954,7 @@ Commands:
         "agent-backend-provision-small-candidate": lambda: run_agent_backend_provision_small_candidate(args),
         "candidate-readiness-smoke": lambda: run_candidate_readiness_smoke(args),
         "hidden-eval-seed-run": lambda: run_hidden_eval_seed_run(args),
+        "hidden-eval-rerun-failed": lambda: run_hidden_eval_rerun_failed(args),
         "retrieval-index-build": lambda: run_retrieval_index_build(args),
         "retrieval-search": lambda: run_retrieval_search(args),
         "retrieval-citation-check": lambda: run_retrieval_citation_check(args),

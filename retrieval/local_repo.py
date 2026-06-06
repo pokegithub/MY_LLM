@@ -19,9 +19,11 @@ CLAIM_SUPPORT_SCHEMA = "retrieval_claim_support_report_v1"
 DEFAULT_INDEX_PATH = "./run_artifacts/retrieval_index/local_repo_docs_index_v1.json"
 ALLOWED_SOURCE_CLASS = "allowed"
 ALLOWED_EXTENSIONS = {".md", ".txt", ".json", ".jsonl"}
+CONTRADICTION_ABSTENTION_STATUS = "abstained_due_to_contradiction"
 ANSWERED_STATUSES = {"answered_with_citations", "partial_answer_with_caveats"}
 ABSTENTION_STATUSES = {
     "abstained_no_evidence",
+    CONTRADICTION_ABSTENTION_STATUS,
     "abstained_out_of_scope",
     "blocked_source_policy",
     "unsupported_current_phase",
@@ -1092,7 +1094,7 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
             failure_reasons.append("invalid_citations")
         if not _citation_answer_markers_present(answer_text, citations):
             failure_reasons.append("answer_text_missing_citation_marker")
-    elif citations:
+    elif citations and status != CONTRADICTION_ABSTENTION_STATUS:
         failure_reasons.append("abstention_status_must_not_include_citations")
 
     support = claim_support_report(
@@ -1115,6 +1117,26 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
         if status == "partial_answer_with_caveats":
             if support.get("claims_supported", 0) + support.get("claims_partially_supported", 0) <= 0:
                 failure_reasons.append("partial_answer_requires_some_supported_claim")
+        intentional_eval_probe = (
+            str(answer_payload.get("answer_assembly") or "")
+            == "hidden_eval_intentional_contradiction_probe_v1"
+        )
+        if support.get("claims_contradicted", 0) > 0 and not intentional_eval_probe:
+            status = CONTRADICTION_ABSTENTION_STATUS
+            if isinstance(answer_payload, dict):
+                answer_payload["answer_status"] = CONTRADICTION_ABSTENTION_STATUS
+                answer_payload["abstention_reason"] = "contradicted_by_cited_evidence"
+                answer_payload["retrieval_supported"] = False
+
+    if status == CONTRADICTION_ABSTENTION_STATUS:
+        if not citations:
+            failure_reasons.append("contradiction_abstention_requires_citations")
+        elif not citation_validation.get("valid"):
+            failure_reasons.append("invalid_citations")
+        if support.get("claims_contradicted", 0) > 0:
+            failure_reasons.append("contradicted_claims_present")
+        else:
+            failure_reasons.append("contradiction_abstention_requires_detected_contradiction")
 
     source_policy_status = "allowed"
     if citation_validation.get("results") and any(
@@ -1163,6 +1185,7 @@ def validate_cited_answer(answer_payload: Mapping[str, Any], index: Mapping[str,
         "source_policy_status": source_policy_status,
         "claim_support_check": support,
         "quality_claim": "none",
+        "retrieval_supported": False if status == CONTRADICTION_ABSTENTION_STATUS else status == "answered_with_citations",
         "proves_truth": False,
     }
 
