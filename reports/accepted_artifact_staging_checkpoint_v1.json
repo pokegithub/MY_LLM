@@ -1,0 +1,75 @@
+{
+  "schema": "accepted_artifact_staging_checkpoint_v1",
+  "accepted_artifact_checkpoint_created": true,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "accepted_reports_present": true,
+  "missing_accepted_reports": [],
+  "unexpected_generated_files_tracked": false,
+  "unexpected_generated_files_staged": false,
+  "model_files_staged": false,
+  "run_artifacts_staged": false,
+  "cache_or_checkpoint_roots_staged": false,
+  "working_tree_clean_after_commit_expected": true,
+  "recommended_commit_files": [
+    "reports/accepted_artifact_staging_checkpoint_v1.md",
+    "reports/accepted_artifact_staging_checkpoint_v1.json"
+  ],
+  "accepted_report_inventory": [
+    "reports/index_v1.md",
+    "reports/index_v1.json",
+    "reports/phase_a_final_checkpoint_v1.md",
+    "reports/professional_repo_audit_v1.md",
+    "reports/professional_repo_audit_v1.json",
+    "reports/pre_cloud_batch_plan_v1.md",
+    "reports/pre_cloud_batch_plan_v1.json",
+    "reports/cloud_qwen2_5_coder_7b_evidence_v1.md",
+    "reports/cloud_qwen2_5_coder_7b_evidence_v1.json",
+    "reports/repair_loop_diagnostics_v1.md",
+    "reports/repair_loop_prompt_critique_v1.md",
+    "reports/hidden_eval_targeted_rerun_v1.md",
+    "reports/post_repair_targeted_rerun_checkpoint_v1.md",
+    "reports/post_repair_targeted_rerun_checkpoint_v1.json"
+  ],
+  "verification": {
+    "status": "passed",
+    "deps": "passed",
+    "compile_source": {
+      "status": "passed",
+      "scanned": 103
+    },
+    "repo_assist_eval": {
+      "status": "passed",
+      "query_count": 23,
+      "passed": 23,
+      "failed": 0,
+      "uses_web": false,
+      "uses_model_backend": false
+    },
+    "hidden_eval_seed_run": {
+      "status": "passed",
+      "attempted": 17,
+      "passed": 13,
+      "blocked": 4,
+      "private_leakage": false,
+      "quality_claim": "none"
+    },
+    "trajectory_quality_audit": {
+      "status": "passed",
+      "scanned": 1345,
+      "sft_positive": 0,
+      "rejected_positive": 1345
+    },
+    "pytest": {
+      "status": "passed",
+      "passed": 237,
+      "skipped": 1
+    },
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  }
+}

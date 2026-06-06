@@ -1,0 +1,55 @@
+{
+  "schema": "cli_command_inventory_snapshot_v1",
+  "command_count": 51,
+  "commands_frozen": true,
+  "runtime_behavior_changed": false,
+  "training_started": false,
+  "cloud_used": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "fixture_path": "tests/fixtures/cli_command_inventory_v1.json",
+  "test_path": "tests/test_cli_command_inventory.py",
+  "high_risk_commands_detected_not_executed": true,
+  "cloud_or_download_commands_detected_not_executed": true,
+  "recommended_next_package": "output/helper extraction plan or pure output helper extraction",
+  "verification": {
+    "targeted_test": {
+      "status": "passed",
+      "passed": 8
+    },
+    "status": "passed",
+    "deps": "passed",
+    "compile_source": {
+      "status": "passed",
+      "scanned": 103
+    },
+    "repo_assist_eval": {
+      "status": "passed",
+      "query_count": 23,
+      "passed": 23,
+      "uses_web": false,
+      "uses_model_backend": false
+    },
+    "hidden_eval_seed_run": {
+      "status": "passed",
+      "attempted": 17,
+      "passed": 13,
+      "blocked": 4,
+      "private_leakage": false,
+      "quality_claim": "none"
+    },
+    "trajectory_quality_audit": {
+      "status": "passed",
+      "scanned": 1395,
+      "sft_positive": 0,
+      "rejected_positive": 1395
+    },
+    "pytest": {
+      "status": "passed",
+      "passed": 245,
+      "skipped": 1
+    },
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "schema": "pure_output_helper_extraction_v1",
+  "runtime_behavior_changed": false,
+  "command_count": 51,
+  "command_inventory_changed": false,
+  "command_handlers_moved": false,
+  "parser_choices_changed": false,
+  "dispatch_keys_changed": false,
+  "json_schemas_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "files_changed": [
+    "cli/__init__.py",
+    "cli/output.py",
+    "run.py",
+    "tests/test_cli_output_helpers.py",
+    "reports/pure_output_helper_extraction_v1.md",
+    "reports/pure_output_helper_extraction_v1.json"
+  ],
+  "helpers_extracted": [
+    "print_banner",
+    "format_bool",
+    "safe_text"
+  ],
+  "recommended_next_package": "output/helper extraction follow-up or low-risk wrapper extraction planning",
+  "verification": {
+    "command_inventory_snapshot": {
+      "status": "passed",
+      "passed": 8
+    },
+    "output_helper_tests": {
+      "status": "passed",
+      "passed": 3
+    },
+    "help": "passed",
+    "status": "passed",
+    "deps": "passed",
+    "compile_source": {
+      "status": "passed",
+      "scanned": 103
+    },
+    "repo_assist_eval": {
+      "status": "passed",
+      "query_count": 23,
+      "passed": 23,
+      "uses_web": false,
+      "uses_model_backend": false
+    },
+    "hidden_eval_seed_run": {
+      "status": "passed",
+      "attempted": 17,
+      "passed": 13,
+      "blocked": 4,
+      "private_leakage": false,
+      "quality_claim": "none"
+    },
+    "trajectory_quality_audit": {
+      "status": "passed",
+      "scanned": 1420,
+      "sft_positive": 0,
+      "rejected_positive": 1420
+    },
+    "pytest": {
+      "status": "passed",
+      "passed": 248,
+      "skipped": 1
+    },
+    "compileall": "passed",
+    "git_diff_check": "passed_with_line_ending_warning_only"
+  }
+}

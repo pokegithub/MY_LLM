@@ -1,0 +1,62 @@
+{
+  "schema": "cli_low_risk_command_contracts_v1",
+  "commands_under_contract": [
+    "status",
+    "deps",
+    "compile-source"
+  ],
+  "required_json_keys": {
+    "status": [
+      "schema",
+      "status_checks",
+      "dependency_environment",
+      "optional_backend_dependency_environment",
+      "next_action",
+      "training_quality_claim"
+    ],
+    "deps": [
+      "path",
+      "exists",
+      "ok",
+      "summary",
+      "items",
+      "optional_backend_dependency_environment"
+    ],
+    "compile-source": [
+      "schema",
+      "ok",
+      "scope",
+      "full_compileall_replacement",
+      "scanned_count",
+      "skipped_count",
+      "skipped_generated_roots",
+      "failures",
+      "behavior_changed"
+    ]
+  },
+  "required_text_markers": {
+    "status": [
+      "PIPELINE STATUS",
+      "DEPENDENCY ENVIRONMENT",
+      "OPTIONAL BACKEND DEPENDENCIES",
+      "NEXT:"
+    ],
+    "deps": [
+      "DEPENDENCY ENVIRONMENT",
+      "OPTIONAL BACKEND DEPENDENCIES",
+      "DEPENDENCY CHECK PASSED"
+    ],
+    "compile-source": [
+      "SOURCE COMPILE",
+      "tracked_python_sources_only",
+      "full_compileall_replacement",
+      "ok"
+    ]
+  },
+  "truthfulness_expectations": {
+    "training_quality_claim": "none",
+    "compile_source_scope": "tracked_python_sources_only",
+    "compile_source_full_compileall_replacement": false,
+    "compile_source_behavior_changed": false
+  }
+}

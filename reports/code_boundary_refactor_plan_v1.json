@@ -1,0 +1,87 @@
+{
+  "schema": "code_boundary_refactor_plan_v1",
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "command_count": 51,
+  "commands_inventoried": true,
+  "safe_extraction_candidates": [
+    "status",
+    "deps",
+    "compile-source",
+    "shared output/banner helpers",
+    "repo-assist wrappers after snapshots",
+    "repo-assist-eval wrapper after snapshots",
+    "deployment-info",
+    "hw-profile"
+  ],
+  "medium_risk_candidates": [
+    "retrieval command wrappers",
+    "hidden-eval command wrappers",
+    "backend smoke/provision wrappers",
+    "candidate-readiness-smoke wrapper",
+    "hardware/validation wrappers"
+  ],
+  "high_risk_candidates": [
+    "training/preflight/SFT/DPO/distill/improve/full commands",
+    "trajectory-quality eligibility logic",
+    "agent backend parser/output normalization/path safety",
+    "agent orchestrator rollback/verifier flow",
+    "hidden private target execution",
+    "retrieval source-policy/citation/claim verification",
+    "data governance/legal policy"
+  ],
+  "required_tests": [
+    "command inventory snapshot test",
+    "run.py --help command-list stability test",
+    "dispatch mapping snapshot test",
+    "JSON output key stability tests",
+    "repo-assist-eval command test",
+    "hidden-eval privacy test",
+    "trajectory-quality SFT-positive remains 0 test",
+    "backend fail-closed smoke test",
+    "candidate readiness unavailable/available tests",
+    "no training command accidentally run test",
+    "no cloud command accidentally run test"
+  ],
+  "recommended_next_package": "CLI command inventory/snapshot tests",
+  "verification": {
+    "status": "passed",
+    "deps": "passed",
+    "compile_source": {
+      "status": "passed",
+      "scanned": 103
+    },
+    "repo_assist_eval": {
+      "status": "passed",
+      "query_count": 23,
+      "passed": 23,
+      "uses_web": false,
+      "uses_model_backend": false
+    },
+    "hidden_eval_seed_run": {
+      "status": "passed",
+      "attempted": 17,
+      "passed": 13,
+      "blocked": 4,
+      "private_leakage": false,
+      "quality_claim": "none"
+    },
+    "trajectory_quality_audit": {
+      "status": "passed",
+      "scanned": 1370,
+      "sft_positive": 0,
+      "rejected_positive": 1370
+    },
+    "pytest": {
+      "status": "passed",
+      "passed": 237,
+      "skipped": 1
+    },
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  }
+}

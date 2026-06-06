@@ -1,0 +1,70 @@
+{
+  "schema": "cli_low_risk_command_contracts_v1",
+  "runtime_behavior_changed": false,
+  "commands_covered": [
+    "status",
+    "deps",
+    "compile-source"
+  ],
+  "json_contracts_locked": true,
+  "text_markers_locked": true,
+  "handlers_moved": false,
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "tests_added": [
+    "tests/test_cli_low_risk_command_contracts.py",
+    "tests/fixtures/cli_low_risk_command_contracts_v1.json"
+  ],
+  "recommended_next_package": "status/deps/compile-source wrapper extraction planning or pure wrapper extraction",
+  "verification": {
+    "command_inventory_snapshot": {
+      "status": "passed",
+      "passed": 8
+    },
+    "output_helper_tests": {
+      "status": "passed",
+      "passed": 3
+    },
+    "low_risk_contract_tests": {
+      "status": "passed",
+      "passed": 6
+    },
+    "help": "passed",
+    "status_command": "passed",
+    "deps_command": "passed",
+    "compile_source_command": "passed",
+    "repo_assist_eval": {
+      "status": "passed",
+      "query_count": 23,
+      "passed": 23,
+      "uses_web": false,
+      "uses_model_backend": false
+    },
+    "hidden_eval_seed_run": {
+      "status": "passed",
+      "attempted": 17,
+      "passed": 13,
+      "blocked": 4,
+      "private_leakage": false,
+      "quality_claim": "none"
+    },
+    "trajectory_quality_audit": {
+      "status": "passed",
+      "scanned": 1445,
+      "sft_positive": 0,
+      "rejected_positive": 1445
+    },
+    "pytest": {
+      "status": "passed",
+      "passed": 254,
+      "skipped": 1
+    },
+    "compileall": "passed",
+    "git_diff_check": "passed_with_line_ending_warning_only"
+  }
+}

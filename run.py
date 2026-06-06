@@ -65,6 +65,7 @@ import subprocess
 from core.config_manager import ConfigManager
 from core.dependency_checks import check_requirement_file
 from config import apply_overrides, runtime_config_dict
+from cli.output import format_bool, print_banner
 from security.validator import ValidationError, get_allowed_data_roots, safe_load_json
 
 
@@ -141,9 +142,7 @@ def apply_runtime_config(
     with open(state_path, "w", encoding="utf-8") as f:
         json.dump(runtime_config_dict(), f, indent=2)
 
-    print("\n" + "=" * 60)
-    print("RUNTIME CONFIG")
-    print("=" * 60)
+    print_banner("RUNTIME CONFIG")
     print(f"  sources      : {', '.join(snapshot.sources)}")
     print(f"  config_hash  : {snapshot.config_hash}")
     print(f"  applied_keys : {result['applied']}")
@@ -408,9 +407,7 @@ def show_status():
         _emit_json(report)
         return
 
-    print("\n" + "=" * 60)
-    print("PIPELINE STATUS")
-    print("=" * 60)
+    print_banner("PIPELINE STATUS")
 
     for row in collect_status_checks():
         name = row["name"]
@@ -526,15 +523,13 @@ def run_compile_source():
     if OUTPUT_JSON:
         _emit_json(payload)
     else:
-        print("\n" + "=" * 60)
-        print("SOURCE COMPILE")
-        print("=" * 60)
+        print_banner("SOURCE COMPILE")
         print(f"  scope                     : {payload['scope']}")
-        print(f"  full_compileall_replacement: {str(payload['full_compileall_replacement']).lower()}")
+        print(f"  full_compileall_replacement: {format_bool(payload['full_compileall_replacement'])}")
         print(f"  scanned                   : {payload['scanned_count']}")
         print(f"  skipped                   : {payload['skipped_count']}")
         print(f"  skipped_roots             : {', '.join(skipped_roots)}")
-        print(f"  ok                        : {str(payload['ok']).lower()}")
+        print(f"  ok                        : {format_bool(payload['ok'])}")
         for failure in failures[:10]:
             print(f"  failure                   : {failure['path']} :: {failure['error']}")
         print("=" * 60)
@@ -569,9 +564,7 @@ def _build_agent_request(args):
 
 
 def _print_agent_report(title: str, payload: dict):
-    print("\n" + "=" * 60)
-    print(title)
-    print("=" * 60)
+    print_banner(title)
     print(f"  run_id         : {payload['run_id']}")
     print(f"  route          : {payload['route']['route']}")
     print(f"  status         : {payload['status']}")
@@ -647,18 +640,16 @@ def run_agent_backend_smoke(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("AGENT BACKEND SMOKE")
-    print("=" * 60)
+    print_banner("AGENT BACKEND SMOKE")
     print(f"  backend_kind      : {payload.get('backend_kind', 'unknown')}")
     print(f"  configured_model  : {payload.get('configured_model') or 'none'}")
-    print(f"  backend_available : {str(payload.get('backend_available')).lower()}")
+    print(f"  backend_available : {format_bool(payload.get('backend_available'))}")
     print(f"  smoke_level       : {payload.get('smoke_level')}")
-    print(f"  transformers      : {str(payload.get('transformers_available')).lower()}")
+    print(f"  transformers      : {format_bool(payload.get('transformers_available'))}")
     if payload.get("local_files_only") is not None:
-        print(f"  local_files_only  : {str(payload.get('local_files_only')).lower()}")
+        print(f"  local_files_only  : {format_bool(payload.get('local_files_only'))}")
     if payload.get("model_path_exists") is not None:
-        print(f"  model_path_exists : {str(payload.get('model_path_exists')).lower()}")
+        print(f"  model_path_exists : {format_bool(payload.get('model_path_exists'))}")
     print(f"  load_status       : {payload.get('load_status')}")
     print(f"  tokenizer_load    : {payload.get('tokenizer_load_status')}")
     print(f"  model_load        : {payload.get('model_load_status')}")
@@ -667,21 +658,21 @@ def run_agent_backend_smoke(args):
     print(f"  attempts          : {payload.get('generation_attempts')}")
     print(f"  malformed_retries : {payload.get('malformed_retry_count')}")
     print(f"  raw_parse_status  : {payload.get('raw_parse_status')}")
-    print(f"  normalization     : attempted={str(payload.get('normalization_attempted')).lower()} applied={str(payload.get('normalization_applied')).lower()}")
+    print(f"  normalization     : attempted={format_bool(payload.get('normalization_attempted'))} applied={format_bool(payload.get('normalization_applied'))}")
     if payload.get("normalization_kind"):
         print(f"  normalization_kind: {payload.get('normalization_kind')}")
     if payload.get("normalization_rejected_reason"):
         print(f"  norm_rejected     : {payload.get('normalization_rejected_reason')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
     print(f"  schema_status     : {payload.get('schema_validation_status') or payload.get('final_schema_validation_status')}")
-    print(f"  candidate_valid   : {str(payload.get('structured_candidate_valid')).lower()}")
-    print(f"  unsafe_path       : {str(payload.get('unsafe_path_detected')).lower()}")
+    print(f"  candidate_valid   : {format_bool(payload.get('structured_candidate_valid'))}")
+    print(f"  unsafe_path       : {format_bool(payload.get('unsafe_path_detected'))}")
     print(f"  candidate_status  : {payload.get('tiny_candidate_generation_status')}")
     if payload.get("failure_class"):
         print(f"  failure_class     : {payload.get('failure_class')}")
     if payload.get("failure_reason"):
         print(f"  failure_reason    : {payload.get('failure_reason')}")
-    print(f"  proves_coding     : {str(payload.get('proves_real_coding_ability')).lower()}")
+    print(f"  proves_coding     : {format_bool(payload.get('proves_real_coding_ability'))}")
     print(f"  quality_claim     : {payload.get('quality_claim')}")
     print("=" * 60)
 
@@ -698,14 +689,12 @@ def run_agent_backend_provision_tiny_model(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("AGENT BACKEND TINY MODEL PROVISION")
-    print("=" * 60)
+    print_banner("AGENT BACKEND TINY MODEL PROVISION")
     print(f"  status       : {payload.get('status')}")
     print(f"  model_id     : {payload.get('model_id')}")
     print(f"  destination  : {payload.get('destination')}")
-    print(f"  smoke_only   : {str(payload.get('smoke_only')).lower()}")
-    print(f"  internet     : {str(payload.get('internet_required')).lower()}")
+    print(f"  smoke_only   : {format_bool(payload.get('smoke_only'))}")
+    print(f"  internet     : {format_bool(payload.get('internet_required'))}")
     if payload.get("failure_class"):
         print(f"  failure_class: {payload.get('failure_class')}")
     if payload.get("failure_reason"):
@@ -714,7 +703,7 @@ def run_agent_backend_provision_tiny_model(args):
         summary = payload["artifact_summary"]
         print(f"  files        : {summary.get('file_count')}")
         print(f"  size_bytes   : {summary.get('size_bytes')}")
-    print(f"  proves_coding: {str(payload.get('proves_real_coding_ability')).lower()}")
+    print(f"  proves_coding: {format_bool(payload.get('proves_real_coding_ability'))}")
     print(f"  quality_claim: {payload.get('quality_claim')}")
     print("=" * 60)
 
@@ -731,15 +720,13 @@ def run_agent_backend_provision_small_candidate(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("AGENT BACKEND SMALL CANDIDATE PROVISION")
-    print("=" * 60)
+    print_banner("AGENT BACKEND SMALL CANDIDATE PROVISION")
     print(f"  status        : {payload.get('status')}")
     print(f"  selected_model: {payload.get('selected_model_id') or 'none'}")
     print(f"  destination   : {payload.get('destination') or 'none'}")
     print(f"  config_path   : {payload.get('config_path')}")
-    print(f"  downloaded    : {str(payload.get('downloaded_autonomously')).lower()}")
-    print(f"  smoke_only    : {str(payload.get('smoke_only')).lower()}")
+    print(f"  downloaded    : {format_bool(payload.get('downloaded_autonomously'))}")
+    print(f"  smoke_only    : {format_bool(payload.get('smoke_only'))}")
     if payload.get("failure_class"):
         print(f"  failure_class : {payload.get('failure_class')}")
     if payload.get("failure_reason"):
@@ -748,7 +735,7 @@ def run_agent_backend_provision_small_candidate(args):
         summary = payload["artifact_summary"]
         print(f"  files         : {summary.get('file_count')}")
         print(f"  size_bytes    : {summary.get('size_bytes')}")
-    print(f"  proves_quality: {str(payload.get('proves_model_quality')).lower()}")
+    print(f"  proves_quality: {format_bool(payload.get('proves_model_quality'))}")
     print(f"  winner_claim  : {payload.get('bakeoff_winner_claim')}")
     print(f"  quality_claim : {payload.get('quality_claim')}")
     print("=" * 60)
@@ -768,25 +755,23 @@ def run_candidate_readiness_smoke(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("CANDIDATE READINESS SMOKE")
-    print("=" * 60)
+    print_banner("CANDIDATE READINESS SMOKE")
     print(f"  candidate_id      : {payload.get('candidate_id')}")
     print(f"  role              : {payload.get('candidate_role')}")
     print(f"  model_path        : {payload.get('model_path') or 'none'}")
-    print(f"  path_exists       : {str(payload.get('model_path_exists')).lower()}")
+    print(f"  path_exists       : {format_bool(payload.get('model_path_exists'))}")
     print(f"  model_load        : {payload.get('model_load_status')}")
     print(f"  generation        : {payload.get('generation_status')}")
     print(f"  parse_status      : {payload.get('structured_output_parse_status')}")
     print(f"  schema_status     : {payload.get('schema_validation_status')}")
-    print(f"  candidate_valid   : {str(payload.get('candidate_valid')).lower()}")
+    print(f"  candidate_valid   : {format_bool(payload.get('candidate_valid'))}")
     print(f"  verifier_status   : {payload.get('verifier_status')}")
     print(f"  smoke_level       : {payload.get('smoke_level')}")
     if payload.get("failure_class"):
         print(f"  failure_class     : {payload.get('failure_class')}")
     if payload.get("failure_reason"):
         print(f"  failure_reason    : {payload.get('failure_reason')}")
-    print(f"  proves_quality    : {str(payload.get('proves_model_quality')).lower()}")
+    print(f"  proves_quality    : {format_bool(payload.get('proves_model_quality'))}")
     print(f"  winner_claim      : {payload.get('bakeoff_winner_claim')}")
     print(f"  quality_claim     : {payload.get('quality_claim')}")
     print("=" * 60)
@@ -808,9 +793,7 @@ def run_hidden_eval_seed_run(args):
         return
 
     counts = payload.get("counts") or {}
-    print("\n" + "=" * 60)
-    print("HIDDEN EVAL SEED RUN")
-    print("=" * 60)
+    print_banner("HIDDEN EVAL SEED RUN")
     print(f"  run_id              : {payload.get('run_id')}")
     print(f"  seed_total          : {payload.get('seed_count_total')}")
     print(f"  attempted           : {counts.get('total_attempted')}")
@@ -837,7 +820,7 @@ def run_hidden_eval_seed_run(args):
     print(f"  verifier_passed     : {counts.get('verifier_passed')}")
     print(f"  backend_kind        : {payload.get('backend_kind')}")
     print(f"  model_id_or_path    : {payload.get('model_id_or_path')}")
-    print(f"  private_leakage     : {str(payload.get('private_target_leakage')).lower()}")
+    print(f"  private_leakage     : {format_bool(payload.get('private_target_leakage'))}")
     print(f"  quality_claim       : {payload.get('quality_claim')}")
     print(f"  report_path         : {payload.get('summary_report_path')}")
     print("=" * 60)
@@ -889,9 +872,7 @@ def run_hidden_eval_rerun_failed(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("HIDDEN EVAL TARGETED RERUN DELTA")
-    print("=" * 60)
+    print_banner("HIDDEN EVAL TARGETED RERUN DELTA")
     print(f"  previous_run_id     : {payload.get('previous_run_id')}")
     print(f"  new_run_id          : {payload.get('new_run_id')}")
     print(f"  seeds_rerun         : {', '.join(payload.get('seed_ids_rerun') or [])}")
@@ -900,9 +881,9 @@ def run_hidden_eval_rerun_failed(args):
     print(f"  unchanged           : {payload.get('unchanged_count')}")
     print(f"  previous_passed     : {payload.get('previous_passed_count')}")
     print(f"  new_passed_subset   : {payload.get('new_passed_count_for_rerun_subset')}")
-    print(f"  private_leakage     : {str(payload.get('private_leakage')).lower()}")
-    print(f"  training_executed   : {str(payload.get('training_executed')).lower()}")
-    print(f"  phase_b_started     : {str(payload.get('phase_b_started')).lower()}")
+    print(f"  private_leakage     : {format_bool(payload.get('private_leakage'))}")
+    print(f"  training_executed   : {format_bool(payload.get('training_executed'))}")
+    print(f"  phase_b_started     : {format_bool(payload.get('phase_b_started'))}")
     print(f"  quality_claim       : {payload.get('quality_claim')}")
     print(f"  delta_report_path   : {payload.get('delta_report_path')}")
     for item in payload.get("items", []):
@@ -931,9 +912,7 @@ def run_retrieval_index_build(args):
     for item in payload.get("skip_report", []):
         reason = item.get("skip_reason") or "unknown"
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-    print("\n" + "=" * 60)
-    print("RETRIEVAL INDEX BUILD")
-    print("=" * 60)
+    print_banner("RETRIEVAL INDEX BUILD")
     print(f"  index_path       : {payload.get('index_path')}")
     print(f"  documents        : {len(payload.get('documents', []))}")
     print(f"  chunks           : {len(payload.get('chunks', []))}")
@@ -941,7 +920,7 @@ def run_retrieval_index_build(args):
     print(f"  hidden_private   : excluded")
     print(f"  hidden_fixtures  : excluded from normal corpus")
     print(f"  mode             : {payload.get('retrieval_mode')}")
-    print(f"  proves_truth     : {str(payload.get('proves_truth')).lower()}")
+    print(f"  proves_truth     : {format_bool(payload.get('proves_truth'))}")
     print(f"  quality_claim    : {payload.get('quality_claim')}")
     if skip_reasons:
         for reason, count in sorted(skip_reasons.items())[:8]:
@@ -966,9 +945,7 @@ def run_retrieval_search(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("RETRIEVAL SEARCH")
-    print("=" * 60)
+    print_banner("RETRIEVAL SEARCH")
     print(f"  query         : {payload.get('query')}")
     print(f"  status        : {payload.get('status')}")
     print(f"  matches       : {len(payload.get('matches', []))}")
@@ -1005,13 +982,11 @@ def run_retrieval_citation_check(args):
         return
 
     validation = payload.get("citation_validation") or {}
-    print("\n" + "=" * 60)
-    print("RETRIEVAL CITATION CHECK")
-    print("=" * 60)
+    print_banner("RETRIEVAL CITATION CHECK")
     print(f"  query          : {payload.get('query')}")
     print(f"  search_status  : {payload.get('search_status')}")
     print(f"  citation_count : {validation.get('citation_count')}")
-    print(f"  valid          : {str(validation.get('valid')).lower()}")
+    print(f"  valid          : {format_bool(validation.get('valid'))}")
     if validation.get("failure_reason"):
         print(f"  failure_reason : {validation.get('failure_reason')}")
     print(f"  quality_claim  : {payload.get('quality_claim')}")
@@ -1039,9 +1014,7 @@ def run_retrieval_answer(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("RETRIEVAL ANSWER")
-    print("=" * 60)
+    print_banner("RETRIEVAL ANSWER")
     print(f"  query          : {payload.get('query')}")
     print(f"  answer_status  : {payload.get('answer_status')}")
     if payload.get("answer_text"):
@@ -1056,7 +1029,7 @@ def run_retrieval_answer(args):
             f"{citation.get('document_ref')} "
             f"{citation.get('locator_type')}={citation.get('locator')}"
         )
-    print(f"  verifier_valid : {str(validation.get('valid')).lower()}")
+    print(f"  verifier_valid : {format_bool(validation.get('valid'))}")
     if validation.get("failure_reason"):
         print(f"  failure_reason : {validation.get('failure_reason')}")
     print(f"  claim_count    : {validation.get('claim_count')}")
@@ -1467,9 +1440,7 @@ def run_repo_assist_eval(args):
         _emit_json(report)
         return
 
-    print("\n" + "=" * 60)
-    print("REPO ASSIST EVAL")
-    print("=" * 60)
+    print_banner("REPO ASSIST EVAL")
     print(f"  query_pack       : {os.path.abspath(pack_path)}")
     print(f"  query_count      : {counts['query_count']}")
     print(f"  passed           : {counts['passed_count']}")
@@ -1478,10 +1449,10 @@ def run_repo_assist_eval(args):
     print(f"  unsupported_abstain: {counts['unsupported_queries_abstained']}")
     print(f"  direct_templates : {counts['direct_template_applied']}/{counts['direct_template_expected']}")
     print(f"  claims_unsupported_total: {counts['claims_unsupported_total']}")
-    print(f"  retrieval_index_missing: {str(retrieval_index_missing).lower()}")
-    print(f"  retrieval_index_built: {str(retrieval_index_built).lower()}")
-    print(f"  uses_web         : {str(all_uses_web).lower()}")
-    print(f"  uses_model_backend: {str(all_uses_model_backend).lower()}")
+    print(f"  retrieval_index_missing: {format_bool(retrieval_index_missing)}")
+    print(f"  retrieval_index_built: {format_bool(retrieval_index_built)}")
+    print(f"  uses_web         : {format_bool(all_uses_web)}")
+    print(f"  uses_model_backend: {format_bool(all_uses_model_backend)}")
     print(f"  quality_claim    : {report['quality_claim']}")
     print(f"  report_path      : {report['report_path']}")
     for item in results:
@@ -1500,15 +1471,13 @@ def run_repo_assist(args):
         _emit_json(payload)
         return
 
-    print("\n" + "=" * 60)
-    print("REPO ASSIST")
-    print("=" * 60)
+    print_banner("REPO ASSIST")
     print("Status")
     print(f"  query              : {payload.get('query')}")
     print(f"  assistant_status   : {payload.get('assistant_status')}")
-    print(f"  verifier_valid     : {str(payload.get('verifier_valid')).lower()}")
+    print(f"  verifier_valid     : {format_bool(payload.get('verifier_valid'))}")
     print(f"  answer_style       : {payload.get('answer_style')}")
-    print(f"  direct_template    : {str(payload.get('direct_answer_template_applied')).lower()}")
+    print(f"  direct_template    : {format_bool(payload.get('direct_answer_template_applied'))}")
     if payload.get("direct_answer_intent"):
         print(f"  direct_intent      : {payload.get('direct_answer_intent')}")
     print("")
@@ -1546,17 +1515,15 @@ def run_repo_assist(args):
     print("Limits")
     print(f"  semantic_truth     : {payload.get('semantic_truth_claim')}")
     print(f"  quality_claim      : {payload.get('quality_claim')}")
-    print(f"  uses_web           : {str(payload.get('uses_web')).lower()}")
-    print(f"  uses_model_backend : {str(payload.get('uses_model_backend')).lower()}")
-    print(f"  uses_vector_search : {str(payload.get('uses_vector_search')).lower()}")
-    print(f"  uses_memory        : {str(payload.get('uses_semantic_memory')).lower()}")
+    print(f"  uses_web           : {format_bool(payload.get('uses_web'))}")
+    print(f"  uses_model_backend : {format_bool(payload.get('uses_model_backend'))}")
+    print(f"  uses_vector_search : {format_bool(payload.get('uses_vector_search'))}")
+    print(f"  uses_memory        : {format_bool(payload.get('uses_semantic_memory'))}")
     print("=" * 60)
 
 
 def _print_trajectory_summary(title: str, payload: dict):
-    print("\n" + "=" * 60)
-    print(title)
-    print("=" * 60)
+    print_banner(title)
     print(f"  trajectory_root : {payload['trajectory_root']}")
     print(f"  count           : {payload['count']}")
     items = payload.get("items") or []
@@ -1573,9 +1540,7 @@ def _print_trajectory_summary(title: str, payload: dict):
 
 
 def _print_trajectory_record(title: str, payload: dict):
-    print("\n" + "=" * 60)
-    print(title)
-    print("=" * 60)
+    print_banner(title)
     print(f"  run_id         : {payload['run_id']}")
     print(f"  status         : {payload['status']}")
     print(f"  route          : {payload['route']}")
@@ -1667,9 +1632,7 @@ def run_trajectory_search(args):
 
 
 def _print_export_summary(title: str, payload: dict):
-    print("\n" + "=" * 60)
-    print(title)
-    print("=" * 60)
+    print_banner(title)
     print(f"  export_type        : {payload['export_type']}")
     print(f"  record_schema      : {payload['record_schema']}")
     print(f"  scanned            : {payload['scanned_trajectories']}")
@@ -1730,9 +1693,7 @@ def run_trajectory_export_retrieval(args):
 
 
 def _print_trajectory_quality_audit(payload: dict):
-    print("\n" + "=" * 60)
-    print("TRAJECTORY QUALITY AUDIT")
-    print("=" * 60)
+    print_banner("TRAJECTORY QUALITY AUDIT")
     print(f"  trajectory_root       : {payload['trajectory_root']}")
     print(f"  scanned               : {payload['scanned_trajectories']}")
     print(f"  sft_positive          : {payload['eligibility_counts']['sft_positive_eligible']}")
@@ -1777,9 +1738,7 @@ def run_hardware_validate():
             sys.exit(1)
         return
 
-    print("\n" + "=" * 60)
-    print("HARDWARE VALIDATION")
-    print("=" * 60)
+    print_banner("HARDWARE VALIDATION")
     nvidia = report.get("nvidia_smi", {})
     system_gpus = nvidia.get("gpus", []) if isinstance(nvidia, dict) else []
     print(f"  cuda_available        : {report['cuda_available']}")
@@ -1827,9 +1786,7 @@ def run_gpu_fit_validate():
             sys.exit(1)
         return
 
-    print("\n" + "=" * 60)
-    print("GPU CONSTRAINED-FIT VALIDATION")
-    print("=" * 60)
+    print_banner("GPU CONSTRAINED-FIT VALIDATION")
     interpreter = report.get("interpreter", {})
     print(f"  interpreter        : {interpreter.get('executable', 'unknown')}")
     print(f"  repo_venv          : {interpreter.get('is_repo_local_venv', False)}")
@@ -1901,9 +1858,7 @@ def run_data_governance():
     dedup = report["exact_dedup"]
     benchmark_risk = report["benchmark_source_risk"]
     summary = report.get("summary", {})
-    print("\n" + "=" * 60)
-    print("DATA GOVERNANCE EVIDENCE")
-    print("=" * 60)
+    print_banner("DATA GOVERNANCE EVIDENCE")
     print(f"  sources               : {source_manifest['source_count']}")
     print(f"  active_sources        : {source_manifest['active_source_count']}")
     print(f"  known_licenses        : {source_manifest['known_license_count']}")
@@ -1943,9 +1898,7 @@ def run_data_governance():
 
 
 def run_tokenizer():
-    print("\n" + "=" * 60)
-    print("STEP 1: Training Tokenizer")
-    print("=" * 60)
+    print_banner("STEP 1: Training Tokenizer")
     t0 = time.time()
 
     import train_tokenizer
@@ -1956,9 +1909,7 @@ def run_tokenizer():
 
 
 def run_download():
-    print("\n" + "=" * 60)
-    print("STEP 2: Downloading Data")
-    print("=" * 60)
+    print_banner("STEP 2: Downloading Data")
 
     if not os.path.exists("./tokenizer_data/encoder.json"):
         print("ERROR: Tokenizer not found. Run: python run.py tokenizer")
@@ -2032,9 +1983,7 @@ def run_download_status():
             print(f"\nFailed reading manifest: {str(e)[:120]}")
             return
 
-    print("\n" + "=" * 60)
-    print("DOWNLOAD STATUS")
-    print("=" * 60)
+    print_banner("DOWNLOAD STATUS")
     print(f"  Manifest: {os.path.abspath(manifest_path)}")
     print(f"  Total runs tracked: {summary['total_runs']}")
 
@@ -2081,9 +2030,7 @@ def run_token_manifest():
             sys.exit(1)
         return
 
-    print("\n" + "=" * 60)
-    print("TOKEN ARTIFACT MANIFEST")
-    print("=" * 60)
+    print_banner("TOKEN ARTIFACT MANIFEST")
     print(f"  manifest_path       : {os.path.abspath(report['manifest_path'])}")
     print(f"  artifact_count      : {report['artifact_count']}")
     print(f"  unknown_source_count: {report['unknown_source_count']}")
@@ -2106,9 +2053,7 @@ def run_token_integrity():
             sys.exit(1)
         return
 
-    print("\n" + "=" * 60)
-    print("TOKEN ARTIFACT INTEGRITY")
-    print("=" * 60)
+    print_banner("TOKEN ARTIFACT INTEGRITY")
     print(f"  manifest_path          : {os.path.abspath(report['manifest_path'])}")
     print(f"  schema                 : {report['schema']}")
     print(f"  artifact_count         : {report['artifact_count']}")
@@ -2127,9 +2072,7 @@ def run_token_integrity():
 
 
 def run_train():
-    print("\n" + "=" * 60)
-    print("STEP 3: Pretraining")
-    print("=" * 60)
+    print_banner("STEP 3: Pretraining")
 
     if not os.path.exists("./tokenizer_data/encoder.json"):
         print("ERROR: Tokenizer not found. Run: python run.py tokenizer")
@@ -2159,9 +2102,7 @@ def run_train_preflight():
             sys.exit(1)
         return
 
-    print("\n" + "=" * 60)
-    print("TRAINING PREFLIGHT")
-    print("=" * 60)
+    print_banner("TRAINING PREFLIGHT")
 
     for item in report["checks"]:
         status = str(item.get("status", "unknown")).upper()
@@ -2215,9 +2156,7 @@ def run_validate_real_path():
         _emit_json(report)
         return
 
-    print("\n" + "=" * 60)
-    print("TINY REAL-DATA VALIDATION")
-    print("=" * 60)
+    print_banner("TINY REAL-DATA VALIDATION")
     print(f"  artifact_path     : {report['artifact_path']}")
     print(f"  tokens_read       : {report['tokens_read']}")
     print(f"  checkpoint_path   : {report['checkpoint_path']}")
@@ -2265,9 +2204,7 @@ def run_validate_short_run():
         _emit_json(report)
         return
 
-    print("\n" + "=" * 60)
-    print("SHORT REAL-DATA VALIDATION")
-    print("=" * 60)
+    print_banner("SHORT REAL-DATA VALIDATION")
     print(f"  classification     : {report['run_classification']}")
     print(f"  artifact_path      : {report['artifact_path']}")
     print(f"  total_steps        : {report['total_optimizer_steps']}")
@@ -2298,9 +2235,7 @@ def run_deployment_info():
         })
         return
 
-    print("\n" + "=" * 60)
-    print("DEPLOYMENT TIERS")
-    print("=" * 60)
+    print_banner("DEPLOYMENT TIERS")
 
     for report in reports:
         tier = report["tier"]
@@ -2330,9 +2265,7 @@ def run_deployment_info():
 
 
 def run_sft():
-    print("\n" + "=" * 60)
-    print("STEP 4: Supervised Fine-Tuning")
-    print("=" * 60)
+    print_banner("STEP 4: Supervised Fine-Tuning")
 
     if not os.path.exists("./sft_data"):
         print("SFT data directory not found: ./sft_data/")
@@ -2384,9 +2317,7 @@ def run_sft():
 
 
 def run_dpo():
-    print("\n" + "=" * 60)
-    print("STEP 5: Direct Preference Optimization")
-    print("=" * 60)
+    print_banner("STEP 5: Direct Preference Optimization")
 
     if not os.path.exists("./dpo_data"):
         print("DPO data directory not found: ./dpo_data/")
@@ -2422,9 +2353,7 @@ def run_dpo():
 
 
 def run_distill():
-    print("\n" + "=" * 60)
-    print("STEP 5.5: Distillation")
-    print("=" * 60)
+    print_banner("STEP 5.5: Distillation")
     t0 = time.time()
 
     import distillation_trainer
@@ -2435,9 +2364,7 @@ def run_distill():
 
 
 def run_quantize():
-    print("\n" + "=" * 60)
-    print("STEP 6.5: Quantization")
-    print("=" * 60)
+    print_banner("STEP 6.5: Quantization")
     t0 = time.time()
 
     import quant_utils
@@ -2448,17 +2375,13 @@ def run_quantize():
 
 
 def run_hw_profile():
-    print("\n" + "=" * 60)
-    print("STEP 0: Hardware Profile")
-    print("=" * 60)
+    print_banner("STEP 0: Hardware Profile")
     import hardware_profiles
     hardware_profiles.show_profile()
 
 
 def run_eval_harness():
-    print("\n" + "=" * 60)
-    print("STEP 7.5: Evaluation Harness")
-    print("=" * 60)
+    print_banner("STEP 7.5: Evaluation Harness")
     t0 = time.time()
 
     from eval_harness.runner import run
@@ -2469,9 +2392,7 @@ def run_eval_harness():
 
 
 def run_improve():
-    print("\n" + "=" * 60)
-    print("STEP 6: Self-Improvement Loop")
-    print("=" * 60)
+    print_banner("STEP 6: Self-Improvement Loop")
 
     t0 = time.time()
     import infinite_improver
@@ -2482,9 +2403,7 @@ def run_improve():
 
 
 def run_eval():
-    print("\n" + "=" * 60)
-    print("STEP 7: Evaluation")
-    print("=" * 60)
+    print_banner("STEP 7: Evaluation")
 
     if not os.path.exists("./tokenizer_data/encoder.json"):
         print("ERROR: Tokenizer artifacts not found.")
@@ -2500,9 +2419,7 @@ def run_eval():
 
 
 def run_benchmark_harness():
-    print("\n" + "=" * 60)
-    print("STEP 7.2: Benchmark Harness")
-    print("=" * 60)
+    print_banner("STEP 7.2: Benchmark Harness")
 
     if not os.path.exists("./tokenizer_data/encoder.json"):
         print("ERROR: Tokenizer artifacts not found.")
@@ -2579,9 +2496,7 @@ def audit_quantization_report_contract():
 
 def run_audit():
     """Run narrow Pass 1 truthfulness checks."""
-    print("\n" + "=" * 60)
-    print("PIPELINE AUDIT")
-    print("=" * 60)
+    print_banner("PIPELINE AUDIT")
 
     checks = [
         (
@@ -2645,9 +2560,7 @@ def run_audit():
 
 def run_full():
     """Run the full pipeline end-to-end."""
-    print("\n" + "=" * 60)
-    print("FULL PIPELINE")
-    print("=" * 60)
+    print_banner("FULL PIPELINE")
     t_total = time.time()
 
     stages = [
