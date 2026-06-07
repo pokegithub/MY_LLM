@@ -1,0 +1,38 @@
+{
+  "schema": "hardware_gpu_validate_extraction_readiness_v1",
+  "hardware_validate_ready_to_extract": false,
+  "gpu_fit_validate_ready_to_extract": false,
+  "hardware_validate_risk_rating": "medium",
+  "gpu_fit_validate_risk_rating": "high",
+  "recommended_extraction_strategy": "add_cli_contract_tests_first_then_extract_hardware_validate_before_gpu_fit_validate",
+  "recommended_target_module": "cli/commands/hardware.py",
+  "required_tests_before_extraction": [
+    "hardware-validate --json contract test",
+    "hardware-validate text marker test",
+    "hardware-validate report-path behavior test with temporary report path",
+    "hardware-validate no training/Phase B/model-quality overclaim test",
+    "gpu-fit-validate --json contract or explicit safe skip rule",
+    "gpu-fit-validate text marker or explicit safe skip rule",
+    "gpu-fit-validate report-path behavior test with temporary report path and mocked/safe no-CUDA path",
+    "future cli.commands.hardware import-safety test",
+    "future module does not inspect hardware on import",
+    "command inventory remains 51"
+  ],
+  "commands_executed_during_audit": {
+    "hardware_validate": false,
+    "gpu_fit_validate": false,
+    "reason": "readiness audit only; gpu-fit-validate can allocate CUDA memory and write checkpoint evidence when CUDA is available"
+  },
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "parser_changed": false,
+  "dispatch_changed": false,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "artifact_safety_ok": true,
+  "next_recommended_package": "hardware/gpu validate CLI contract tests"
+}

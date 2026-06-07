@@ -66,6 +66,9 @@ from core.config_manager import ConfigManager
 from config import apply_overrides, runtime_config_dict
 from cli.output import format_bool, print_banner
 from cli.commands.compile_source import run_compile_source as cli_run_compile_source
+from cli.commands.deployment import run_deployment_info as cli_run_deployment_info
+from cli.commands.deployment import run_hw_profile as cli_run_hw_profile
+from cli.commands.hardware import run_hardware_validate as cli_run_hardware_validate
 from cli.commands.status import collect_backend_dependency_checks
 from cli.commands.status import run_deps as cli_run_deps
 from cli.commands.status import show_status as cli_show_status
@@ -1429,54 +1432,6 @@ def run_trajectory_quality_audit(args):
     _print_trajectory_quality_audit(payload)
 
 
-def run_hardware_validate():
-    """Report current-machine hardware validation evidence."""
-    import train
-
-    report = train.run_hardware_readiness_validation()
-    report_path = _write_json_report(
-        report,
-        REPORT_PATH or DEFAULT_HARDWARE_REPORT_PATH,
-    )
-    report["report_path"] = report_path
-    if OUTPUT_JSON:
-        _emit_json(report)
-        if not report["ok"]:
-            sys.exit(1)
-        return
-
-    print_banner("HARDWARE VALIDATION")
-    nvidia = report.get("nvidia_smi", {})
-    system_gpus = nvidia.get("gpus", []) if isinstance(nvidia, dict) else []
-    print(f"  cuda_available        : {report['cuda_available']}")
-    print(f"  cuda_device_count     : {report['cuda_device_count']}")
-    print(f"  torch_version         : {report['torch_version']}")
-    print(f"  torch_cuda_runtime    : {report['torch_cuda_runtime']}")
-    print(f"  cudnn_available       : {report['cudnn_available']}")
-    print(f"  system_gpu_detected   : {report['system_gpu_detected']}")
-    if system_gpus:
-        first_gpu = system_gpus[0]
-        print(f"  system_gpu_name       : {first_gpu.get('name', 'unknown')}")
-        print(f"  system_gpu_vram_gb    : {first_gpu.get('total_memory_gb', 'unknown')}")
-        print(f"  system_gpu_compute    : {first_gpu.get('compute_capability', 'unknown')}")
-    print(f"  gpu_classification    : {report['gpu_result_classification']}")
-    print(f"  evidence_level        : {report['evidence_level']}")
-    print(f"  hardware_ready        : {report['hardware_ready_for_training']}")
-    tensor_ops = report.get("gpu_tensor_ops", {})
-    print(f"  gpu_tensor_op         : {tensor_ops.get('status', 'unknown')}")
-    validation = report.get("validation") or {}
-    print(f"  validation_status     : {validation.get('status', 'unknown')}")
-    print(f"  validation_device     : {validation.get('device_type', 'unknown')}")
-    print(f"  dtype_used            : {validation.get('amp_dtype_used', 'unknown')}")
-    print(f"  report_path           : {os.path.abspath(report_path)}")
-    print("  training_quality_claim: none")
-    for limitation in report.get("limitations", []):
-        print(f"  caveat                : {limitation}")
-    print("=" * 60)
-    if not report["ok"]:
-        sys.exit(1)
-
-
 def run_gpu_fit_validate():
     """Report bounded 4GB GPU fit evidence without claiming training readiness."""
     import train
@@ -1927,50 +1882,6 @@ def run_validate_short_run():
     print("=" * 60)
 
 
-def run_deployment_info():
-    from config import available_deployment_tiers, build_deployment_report
-
-    reports = [
-        build_deployment_report(tier_name)
-        for tier_name in available_deployment_tiers()
-    ]
-    if OUTPUT_JSON:
-        _emit_json({
-            "schema": "deployment_tiers_v1",
-            "reports": reports,
-            "quality_claim": "none",
-        })
-        return
-
-    print_banner("DEPLOYMENT TIERS")
-
-    for report in reports:
-        tier = report["tier"]
-        estimates = report["estimates"]
-        print(f"\n[{tier['name']}]")
-        print(f"  target_vram_gb      : {tier['target_vram_gb']}")
-        print(f"  model_profile       : {report['model_profile']}")
-        print(f"  size_band           : {tier['intended_model_size_band']}")
-        print(f"  active_context      : {tier['active_context_tokens']} tokens")
-        print(
-            "  weight_lower_bound : "
-            f"{estimates['weight_memory_lower_bound_gb']} GB"
-        )
-        print(
-            "  kv_lower_bound     : "
-            f"{estimates['kv_cache_lower_bound_gb']} GB"
-        )
-        print("  runtime             : PyTorch reference path only")
-        print("  external runtimes   : unverified")
-        print(f"  quantization        : {tier['quantization_expectation']}")
-        print(f"  offload             : {tier['offload_expectation']}")
-        print(f"  rag                 : {tier['rag_expectation']}")
-
-    print("\nCAVEAT: estimates are lower bounds only, not deployment proof.")
-    print("CAVEAT: GGUF/GPTQ/AWQ/vLLM/llama.cpp are not implemented here.")
-    print("=" * 60)
-
-
 def run_sft():
     print_banner("STEP 4: Supervised Fine-Tuning")
 
@@ -2079,73 +1990,6 @@ def run_quantize():
 
     elapsed = time.time() - t0
     print(f"\nQuantization complete: {elapsed / 60:.1f} min")
-
-
-def run_hw_profile():
-    if OUTPUT_JSON:
-        import torch
-        import hardware_profiles
-        from config import hardware_profile_cfg
-
-        warnings = []
-        profile = None
-        profile_status = "loaded"
-        try:
-            profile = hardware_profiles.load_profile()
-        except (FileNotFoundError, ValueError, ValidationError) as exc:
-            profile_status = "load_failed"
-            warnings.append(str(exc))
-
-        cuda_available = bool(torch.cuda.is_available())
-        device_count = int(torch.cuda.device_count()) if cuda_available else 0
-        devices = []
-        for index in range(device_count):
-            device = {
-                "index": index,
-                "name": None,
-                "total_memory_gb": None,
-                "compute_capability": None,
-            }
-            try:
-                props = torch.cuda.get_device_properties(index)
-                device["name"] = str(getattr(props, "name", ""))
-                total_memory = getattr(props, "total_memory", None)
-                if total_memory is not None:
-                    device["total_memory_gb"] = round(
-                        float(total_memory) / (1024 ** 3),
-                        3,
-                    )
-                capability = torch.cuda.get_device_capability(index)
-                device["compute_capability"] = ".".join(
-                    str(part) for part in capability
-                )
-            except RuntimeError as exc:
-                warnings.append(f"cuda_device_{index}_inspection_failed: {exc}")
-            devices.append(device)
-
-        _emit_json({
-            "schema": "hardware_profile_v1",
-            "command": "hw-profile",
-            "profile_status": profile_status,
-            "torch_available": True,
-            "cuda_available": cuda_available,
-            "device_count": device_count,
-            "devices": devices,
-            "selected_profile": profile.get("name") if profile else None,
-            "active_profile_config": hardware_profile_cfg.active_profile,
-            "profile": profile,
-            "warnings": warnings,
-            "training_started": False,
-            "phase_b_started": False,
-            "cloud_used": False,
-            "model_quality_claim": "none",
-            "quality_claim": "none",
-        })
-        return
-
-    print_banner("STEP 0: Hardware Profile")
-    import hardware_profiles
-    hardware_profiles.show_profile()
 
 
 def run_eval_harness():
@@ -2658,19 +2502,25 @@ Commands:
         "token-integrity": run_token_integrity,
         "deps": lambda: cli_run_deps(OUTPUT_JSON, _emit_json),
         "compile-source": lambda: cli_run_compile_source(OUTPUT_JSON, _emit_json),
-        "hardware-validate": run_hardware_validate,
+        "hardware-validate": lambda: cli_run_hardware_validate(
+            OUTPUT_JSON,
+            _emit_json,
+            _write_json_report,
+            REPORT_PATH,
+            DEFAULT_HARDWARE_REPORT_PATH,
+        ),
         "gpu-fit-validate": run_gpu_fit_validate,
         "data-governance": run_data_governance,
         "validate-real-path": run_validate_real_path,
         "validate-short-run": run_validate_short_run,
         "train-preflight": run_train_preflight,
-        "deployment-info": run_deployment_info,
+        "deployment-info": lambda: cli_run_deployment_info(OUTPUT_JSON, _emit_json),
         "train": run_train,
         "sft": run_sft,
         "dpo": run_dpo,
         "distill": run_distill,
         "quantize": run_quantize,
-        "hw-profile": run_hw_profile,
+        "hw-profile": lambda: cli_run_hw_profile(OUTPUT_JSON, _emit_json),
         "eval-harness": run_eval_harness,
         "improve": run_improve,
         "eval": run_eval,

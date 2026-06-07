@@ -1,0 +1,26 @@
+{
+  "schema": "cli_hardware_validate_contracts_report_v1",
+  "hardware_validate_contract_added": true,
+  "hardware_validate_executed": true,
+  "hardware_validate_report_path_temp_used": true,
+  "gpu_fit_validate_contract_added": true,
+  "gpu_fit_validate_real_cuda_execution_avoided": true,
+  "gpu_fit_validate_execution_mode": "mocked_handler_only",
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "parser_changed": false,
+  "dispatch_changed": false,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "extraction_allowed_next_for_hardware_validate": true,
+  "extraction_allowed_next_for_gpu_fit_validate": false,
+  "tests_passed": true,
+  "tests_added": [
+    "tests/test_cli_hardware_validate_contracts.py"
+  ],
+  "fixture_added": "tests/fixtures/cli_hardware_validate_contracts_v1.json"
+}

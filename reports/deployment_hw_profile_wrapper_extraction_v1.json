@@ -1,0 +1,24 @@
+{
+  "schema": "deployment_hw_profile_wrapper_extraction_v1",
+  "deployment_info_extracted": true,
+  "hw_profile_extracted": true,
+  "target_module": "cli/commands/deployment.py",
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "parser_changed": false,
+  "dispatch_keys_changed": false,
+  "json_schemas_changed": false,
+  "text_markers_changed": false,
+  "import_safe": true,
+  "lazy_torch_import_preserved": true,
+  "hardware_inspected_on_import": false,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "tests_added": [
+    "tests/test_cli_deployment_command_imports.py"
+  ]
+}

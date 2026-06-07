@@ -1,0 +1,82 @@
+{
+  "schema": "cli_hardware_validate_contracts_v1",
+  "commands_under_contract": [
+    "hardware-validate",
+    "gpu-fit-validate"
+  ],
+  "hardware_validate": {
+    "expected_schema": "hardware_readiness_v1",
+    "temp_report_required": true,
+    "required_json_keys": [
+      "schema",
+      "ok",
+      "torch_version",
+      "torch_cuda_runtime",
+      "cuda_available",
+      "cuda_device_count",
+      "nvidia_smi",
+      "gpu_tensor_ops",
+      "gpu_result_classification",
+      "hardware_ready_for_training",
+      "training_readiness_claim",
+      "quality_claim",
+      "evidence_level",
+      "validation",
+      "limitations",
+      "report_path"
+    ],
+    "required_text_markers": [
+      "HARDWARE VALIDATION",
+      "cuda_available",
+      "gpu_classification",
+      "evidence_level",
+      "hardware_ready",
+      "report_path",
+      "training_quality_claim: none"
+    ]
+  },
+  "gpu_fit_validate": {
+    "expected_schema": "gpu_constrained_fit_validation_v1",
+    "safe_execution_required_before_direct_cli_run": true,
+    "real_cuda_execution_allowed_in_unit_tests": false,
+    "direct_subprocess_execution_allowed": false,
+    "execution_mode_under_contract": "mocked_handler_only",
+    "required_json_keys": [
+      "schema",
+      "ok",
+      "interpreter",
+      "cuda_available",
+      "torch_version",
+      "torch_cuda_runtime",
+      "hardware_classification",
+      "matrix",
+      "smallest_fitting_config",
+      "strongest_fitting_config",
+      "short_validation",
+      "default_training_fit",
+      "pretraining_readiness_changed",
+      "quality_claim",
+      "limitations",
+      "report_path"
+    ],
+    "required_text_markers": [
+      "GPU CONSTRAINED-FIT VALIDATION",
+      "cuda_available",
+      "hardware_class",
+      "Fit matrix",
+      "report_path",
+      "quality_claim      : none"
+    ]
+  },
+  "truthfulness_expectations": {
+    "command_inventory_count": 51,
+    "training_started": false,
+    "phase_b_started": false,
+    "model_quality_claim": "none",
+    "quality_claim": "none",
+    "sft_positive_expected": 0,
+    "cloud_used": false,
+    "handlers_moved": false,
+    "runtime_behavior_changed": false
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "deployment_hw_profile_extraction_readiness_v1",
+  "deployment_info_ready_to_extract": true,
+  "hw_profile_ready_to_extract": true,
+  "deployment_info_risk_rating": "low",
+  "hw_profile_risk_rating": "low_medium",
+  "recommended_extraction_strategy": "extract_both_together_into_cli_commands_deployment_py",
+  "recommended_target_module": "cli/commands/deployment.py",
+  "recommended_functions": [
+    "build_deployment_info_report() -> dict",
+    "run_deployment_info(output_json: bool, emit_json) -> None",
+    "build_hw_profile_report() -> dict",
+    "run_hw_profile(output_json: bool, emit_json) -> None"
+  ],
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "parser_changed": false,
+  "dispatch_changed": false,
+  "handlers_moved": false,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "artifact_safety_ok": true,
+  "next_recommended_package": "extract deployment-info/hw-profile wrappers"
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "deployment_hw_profile_wrapper_extraction_audit_v1",
+  "stale_duplicates_found": false,
+  "stale_duplicate_implementation_in_run_py": false,
+  "import_safe": true,
+  "circular_import_risk_found": false,
+  "lazy_torch_import_preserved": true,
+  "hardware_inspected_on_import": false,
+  "command_count": 51,
+  "command_inventory_changed": false,
+  "informational_contracts_passed": true,
+  "deployment_import_safety_passed": true,
+  "json_schemas_changed": false,
+  "text_markers_changed": false,
+  "runtime_behavior_changed": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "line_counts": {
+    "run_py_current": 2578,
+    "run_py_previous_low_risk_audit": 2626,
+    "run_py_reduction_from_previous_low_risk_audit": 48,
+    "cli_commands_deployment_py": 137,
+    "cli_commands_status_py": 224,
+    "cli_commands_compile_source_py": 90
+  },
+  "artifact_safety": {
+    "no_run_artifacts_staged": true,
+    "no_model_files_staged": true,
+    "no_cache_checkpoint_roots_tracked_unexpectedly": true,
+    "git_diff_cached_name_only_empty": true
+  },
+  "recommended_next_package": "next low-risk informational command readiness audit"
+}
