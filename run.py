@@ -2082,6 +2082,67 @@ def run_quantize():
 
 
 def run_hw_profile():
+    if OUTPUT_JSON:
+        import torch
+        import hardware_profiles
+        from config import hardware_profile_cfg
+
+        warnings = []
+        profile = None
+        profile_status = "loaded"
+        try:
+            profile = hardware_profiles.load_profile()
+        except (FileNotFoundError, ValueError, ValidationError) as exc:
+            profile_status = "load_failed"
+            warnings.append(str(exc))
+
+        cuda_available = bool(torch.cuda.is_available())
+        device_count = int(torch.cuda.device_count()) if cuda_available else 0
+        devices = []
+        for index in range(device_count):
+            device = {
+                "index": index,
+                "name": None,
+                "total_memory_gb": None,
+                "compute_capability": None,
+            }
+            try:
+                props = torch.cuda.get_device_properties(index)
+                device["name"] = str(getattr(props, "name", ""))
+                total_memory = getattr(props, "total_memory", None)
+                if total_memory is not None:
+                    device["total_memory_gb"] = round(
+                        float(total_memory) / (1024 ** 3),
+                        3,
+                    )
+                capability = torch.cuda.get_device_capability(index)
+                device["compute_capability"] = ".".join(
+                    str(part) for part in capability
+                )
+            except RuntimeError as exc:
+                warnings.append(f"cuda_device_{index}_inspection_failed: {exc}")
+            devices.append(device)
+
+        _emit_json({
+            "schema": "hardware_profile_v1",
+            "command": "hw-profile",
+            "profile_status": profile_status,
+            "torch_available": True,
+            "cuda_available": cuda_available,
+            "device_count": device_count,
+            "devices": devices,
+            "selected_profile": profile.get("name") if profile else None,
+            "active_profile_config": hardware_profile_cfg.active_profile,
+            "profile": profile,
+            "warnings": warnings,
+            "training_started": False,
+            "phase_b_started": False,
+            "cloud_used": False,
+            "model_quality_claim": "none",
+            "quality_claim": "none",
+        })
+        return
+
     print_banner("STEP 0: Hardware Profile")
     import hardware_profiles
     hardware_profiles.show_profile()

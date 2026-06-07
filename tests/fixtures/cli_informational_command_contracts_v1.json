@@ -1,0 +1,70 @@
+{
+  "schema": "cli_informational_command_contracts_v1",
+  "commands_under_contract": [
+    "deployment-info",
+    "hw-profile"
+  ],
+  "required_json_keys": {
+    "deployment-info": [
+      "schema",
+      "quality_claim",
+      "reports"
+    ],
+    "hw-profile": [
+      "schema",
+      "command",
+      "profile_status",
+      "torch_available",
+      "cuda_available",
+      "device_count",
+      "devices",
+      "selected_profile",
+      "active_profile_config",
+      "profile",
+      "warnings",
+      "training_started",
+      "phase_b_started",
+      "cloud_used",
+      "model_quality_claim",
+      "quality_claim"
+    ]
+  },
+  "required_report_keys": {
+    "deployment-info": [
+      "tier",
+      "model_profile",
+      "estimates",
+      "caveats",
+      "external_unverified_targets",
+      "profile_is_validated_runtime_support",
+      "repo_verified_external_runtimes"
+    ]
+  },
+  "required_text_markers": {
+    "deployment-info": [
+      "DEPLOYMENT TIERS",
+      "[2gb_edge]",
+      "[8gb_laptop]",
+      "[16gb_workstation]",
+      "external runtimes   : unverified",
+      "CAVEAT: estimates are lower bounds only"
+    ],
+    "hw-profile": [
+      "STEP 0: Hardware Profile"
+    ]
+  },
+  "truthfulness_expectations": {
+    "quality_claim": "none",
+    "deployment_schema": "deployment_tiers_v1",
+    "hardware_profile_schema": "hardware_profile_v1",
+    "command_inventory_count": 51,
+    "hw_profile_json_mode_currently_text_only": false,
+    "handlers_moved": false,
+    "runtime_behavior_changed": true,
+    "behavior_change_scope": "hw-profile --json only",
+    "cloud_used": false,
+    "training_started": false,
+    "phase_b_started": false,
+    "model_quality_claim": "none"
+  }
+}

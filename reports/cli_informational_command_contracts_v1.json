@@ -1,0 +1,29 @@
+{
+  "schema": "cli_informational_command_contracts_report_v1",
+  "commands_covered": [
+    "deployment-info",
+    "hw-profile"
+  ],
+  "json_contracts_locked": true,
+  "json_contract_notes": {
+    "deployment-info": "Structured JSON schema and key contract locked.",
+    "hw-profile": "Structured hardware_profile_v1 JSON schema and key contract locked."
+  },
+  "text_markers_locked": true,
+  "handlers_moved": false,
+  "parser_changed": false,
+  "dispatch_changed": false,
+  "command_inventory_changed": false,
+  "command_count": 51,
+  "runtime_behavior_changed": true,
+  "behavior_change_scope": "hw-profile --json only",
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive_expected": 0,
+  "tests_added": [
+    "tests/test_cli_informational_command_contracts.py"
+  ],
+  "fixture_added": "tests/fixtures/cli_informational_command_contracts_v1.json"
+}
