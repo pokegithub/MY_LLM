@@ -36,11 +36,21 @@
     ]
   },
   "gpu_fit_validate": {
+    "future_module_name": "cli.commands.gpu_fit",
     "expected_schema": "gpu_constrained_fit_validation_v1",
     "safe_execution_required_before_direct_cli_run": true,
     "real_cuda_execution_allowed_in_unit_tests": false,
     "direct_subprocess_execution_allowed": false,
     "execution_mode_under_contract": "mocked_handler_only",
+    "temp_report_required": true,
+    "ok_false_exit_behavior_required": true,
+    "no_default_report_path_write_required": true,
+    "no_checkpoint_artifact_creation_required": true,
+    "future_module_import_safety_required": true,
+    "future_module_must_not_import_train_on_import": true,
+    "future_module_must_not_import_torch_on_import": true,
+    "future_module_must_not_inspect_cuda_on_import": true,
+    "future_module_must_not_write_files_on_import": true,
     "required_json_keys": [
       "schema",
       "ok",

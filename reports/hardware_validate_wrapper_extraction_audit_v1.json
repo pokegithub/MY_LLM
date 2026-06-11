@@ -1,0 +1,53 @@
+{
+  "stale_duplicates_found": false,
+  "stale_duplicate_implementation_in_run_py": false,
+  "hardware_validate_extracted": true,
+  "gpu_fit_validate_extracted": false,
+  "gpu_fit_validate_still_in_run_py": true,
+  "import_safe": true,
+  "circular_import_risk_found": false,
+  "lazy_train_import_preserved": true,
+  "lazy_torch_import_preserved": true,
+  "hardware_inspected_on_import": false,
+  "reports_written_on_import": false,
+  "command_count": 51,
+  "command_inventory_changed": false,
+  "hardware_contracts_passed": true,
+  "hardware_import_safety_passed": true,
+  "json_schema_changed": false,
+  "text_markers_changed": false,
+  "report_path_behavior_changed": false,
+  "exit_behavior_changed": false,
+  "runtime_behavior_changed": false,
+  "real_gpu_fit_validate_run": false,
+  "cloud_used": false,
+  "training_started": false,
+  "phase_b_started": false,
+  "model_quality_claim": "none",
+  "sft_positive": 0,
+  "line_counts": {
+    "run_py_previous_known": 2578,
+    "run_py_current": 2537,
+    "run_py_reduction": 41,
+    "cli_commands_hardware_py": 74,
+    "cli_commands_deployment_py": 137,
+    "cli_commands_status_py": 224,
+    "cli_commands_compile_source_py": 90
+  },
+  "artifact_safety": {
+    "staged_files": 0,
+    "protected_artifact_roots_tracked": false,
+    "run_artifacts_staged": false,
+    "model_files_staged": false,
+    "cache_checkpoint_roots_staged": false
+  },
+  "verification": {
+    "focused_tests_passed": true,
+    "full_tests": "265 passed, 1 skipped",
+    "compileall_passed": true,
+    "repo_assist_eval": "23 passed, 0 failed",
+    "hidden_eval_seed_run": "13 passed, 1 failed, 3 blocked, private_leakage false",
+    "trajectory_quality_audit": "sft_positive 0"
+  },
+  "recommended_next_package": "gpu-fit-validate extraction readiness audit"
+}

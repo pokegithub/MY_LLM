@@ -68,6 +68,7 @@ from cli.output import format_bool, print_banner
 from cli.commands.compile_source import run_compile_source as cli_run_compile_source
 from cli.commands.deployment import run_deployment_info as cli_run_deployment_info
 from cli.commands.deployment import run_hw_profile as cli_run_hw_profile
+from cli.commands.gpu_fit import run_gpu_fit_validate as cli_run_gpu_fit_validate
 from cli.commands.hardware import run_hardware_validate as cli_run_hardware_validate
 from cli.commands.status import collect_backend_dependency_checks
 from cli.commands.status import run_deps as cli_run_deps
@@ -1432,73 +1433,6 @@ def run_trajectory_quality_audit(args):
     _print_trajectory_quality_audit(payload)
 
 
-def run_gpu_fit_validate():
-    """Report bounded 4GB GPU fit evidence without claiming training readiness."""
-    import train
-
-    report = train.run_gpu_constrained_fit_validation()
-    report_path = _write_json_report(
-        report,
-        REPORT_PATH or DEFAULT_GPU_FIT_REPORT_PATH,
-    )
-    report["report_path"] = report_path
-    if OUTPUT_JSON:
-        _emit_json(report)
-        if not report["ok"]:
-            sys.exit(1)
-        return
-
-    print_banner("GPU CONSTRAINED-FIT VALIDATION")
-    interpreter = report.get("interpreter", {})
-    print(f"  interpreter        : {interpreter.get('executable', 'unknown')}")
-    print(f"  repo_venv          : {interpreter.get('is_repo_local_venv', False)}")
-    print(f"  cuda_available     : {report['cuda_available']}")
-    print(f"  torch_version      : {report['torch_version']}")
-    print(f"  torch_cuda_runtime : {report['torch_cuda_runtime']}")
-    print(f"  gpu_name           : {report.get('gpu_name')}")
-    print(f"  vram_gb            : {report.get('detected_total_vram_gb')}")
-    print(f"  hardware_class     : {report['hardware_classification']}")
-    print(f"  preferred_dtype    : {report['preferred_dtype']}")
-    print("\n  Fit matrix:")
-    for item in report.get("matrix", []):
-        peak = item.get("peak_allocated_gb", "unknown")
-        reserved = item.get("peak_reserved_gb", "unknown")
-        print(
-            "    [{fit:<23}] {name:<32} dtype={dtype:<8} "
-            "seq={seq:<4} peak={peak}GB reserved={reserved}GB".format(
-                fit=item.get("fit_classification", "unknown"),
-                name=item.get("name", "unknown"),
-                dtype=item.get("dtype_requested", "unknown"),
-                seq=item.get("seq_len", "unknown"),
-                peak=peak,
-                reserved=reserved,
-            )
-        )
-        if item.get("error"):
-            print(f"      error: {str(item['error'])[:180]}")
-    print(f"\n  smallest_fit       : {report.get('smallest_fitting_config')}")
-    print(f"  strongest_fit      : {report.get('strongest_fitting_config')}")
-    short = report.get("short_validation") or {}
-    print(
-        "  short_validation   : "
-        f"{short.get('fit_classification', 'not_run')}"
-    )
-    if short:
-        print(f"  short_steps        : {short.get('total_optimizer_steps', 'unknown')}")
-        print(f"  short_peak_memory  : {short.get('memory_peak_allocated_bytes', 'unknown')}")
-        print(f"  resume_success     : {short.get('resume_success', False)}")
-    default_fit = report.get("default_training_fit") or {}
-    print(f"  default_fit        : {default_fit.get('fit_classification', 'unknown')}")
-    print(f"  pretrain_changed   : {report['pretraining_readiness_changed']}")
-    print(f"  report_path        : {os.path.abspath(report_path)}")
-    print("  quality_claim      : none")
-    for limitation in report.get("limitations", []):
-        print(f"  caveat             : {limitation}")
-    print("=" * 60)
-    if not report["ok"]:
-        sys.exit(1)
-
-
 def run_data_governance():
     """Report source/license, exact-dedup, and benchmark-risk evidence."""
     import download_data
@@ -2509,7 +2443,13 @@ Commands:
             REPORT_PATH,
             DEFAULT_HARDWARE_REPORT_PATH,
         ),
-        "gpu-fit-validate": run_gpu_fit_validate,
+        "gpu-fit-validate": lambda: cli_run_gpu_fit_validate(
+            OUTPUT_JSON,
+            _emit_json,
+            _write_json_report,
+            REPORT_PATH,
+            DEFAULT_GPU_FIT_REPORT_PATH,
+        ),
         "data-governance": run_data_governance,
         "validate-real-path": run_validate_real_path,
         "validate-short-run": run_validate_short_run,
